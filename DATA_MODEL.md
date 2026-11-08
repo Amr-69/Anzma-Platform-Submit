@@ -5,7 +5,7 @@ It replaces the legacy `schema.sql` and `schema_day4.sql`.
 
 ## Entity-relationship diagram
 
-![Unified ERD](docs/ERD-new.png)
+![Unified ERD](ERD-new.png)
 
 The diagram shows 22 tables: 21 in the `public` schema and `eval.scenario_runs`.
 The schema also defines two convenience views, `v_assets` and `v_events`, which are not drawn.
