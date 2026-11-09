@@ -7,18 +7,22 @@ Metric names match the seeded data: temperature, packet_loss, bandwidth_util.
 """
 
 
-import math
 import os
 from datetime import datetime, timedelta, timezone
 
+
 from dotenv import load_dotenv
 
+
 load_dotenv()
+
 
 import psycopg
 from psycopg.rows import dict_row
 
+
 from reference_data import SYSTEM_CODES
+
 
 
 # ============================================================
@@ -26,9 +30,11 @@ from reference_data import SYSTEM_CODES
 # ============================================================
 
 
+
 TS_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 MAX_RANGE_DAYS = 31
 HEARTBEAT_EVENT = "heartbeat"
+
 
 
 ZONE_TEMP_METRIC = "temperature"
@@ -36,20 +42,25 @@ PACKET_LOSS_METRIC = "packet_loss"
 BANDWIDTH_METRIC = "bandwidth_util"
 
 
+
 STATUS_ORDER = ["critical", "no_data", "warning", "normal"]
+
 
 
 class DashboardError(ValueError):
     """The request is invalid (bad filter, bad period)."""
 
 
+
 class NoDataError(DashboardError):
     """The database has no telemetry or events to build a dashboard from."""
+
 
 
 # ============================================================
 # KPI DEFINITIONS (kept identical to original)
 # ============================================================
+
 
 
 KPI_DEFINITIONS = {
@@ -126,18 +137,21 @@ KPI_DEFINITIONS = {
         "source": "event_records, event_types",
         "definition": (
             "Heartbeat events received divided by heartbeat events expected, "
-            "times 100 (capped at 100). Expected = assets that send heartbeats "
-            "times the number of whole-hour instants within the intersection "
-            "of the selected period and available dataset coverage. "
-            "CCTV cameras and the fire panel send one heartbeat per hour."
+            "times 100 (capped at 100). Expected = heartbeat-sending assets "
+            "times the number of hourly heartbeat opportunities in the "
+            "intersection of the selected period and available dataset coverage. "
+            "Heartbeats occur once per hour, and both the first and last "
+            "possible heartbeat timestamps are included."
         ),
     },
 }
 
 
+
 # ============================================================
 # TIMESTAMPS
 # ============================================================
+
 
 
 def parse_utc_timestamp(value: str) -> datetime:
@@ -146,25 +160,31 @@ def parse_utc_timestamp(value: str) -> datetime:
         raise ValueError("Timestamp must end with Z and use UTC.")
 
 
+
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
         raise ValueError("Invalid calendar date or timestamp.") from exc
 
 
+
     if parsed.utcoffset() != timedelta(0):
         raise ValueError("Timestamp must use UTC.")
+
 
 
     if parsed.microsecond != 0:
         raise ValueError("Timestamp must have whole-second precision.")
 
 
+
     if parsed.strftime(TS_FORMAT) != value:
         raise ValueError("Timestamp must use YYYY-MM-DDTHH:MM:SSZ format.")
 
 
+
     return parsed
+
 
 
 def format_ts(moment: datetime) -> str:
@@ -172,14 +192,17 @@ def format_ts(moment: datetime) -> str:
     return moment.astimezone(timezone.utc).strftime(TS_FORMAT)
 
 
+
 # ============================================================
 # DATABASE
 # ============================================================
 
 
+
 def open_readonly():
     """
     Open a read-only-style connection to PostgreSQL.
+
 
     Connection parameters come from environment variables.
     """
@@ -192,20 +215,25 @@ def open_readonly():
     }
 
 
+
     # dict_row makes every row behave like a dictionary (row["column"]).
     conn = psycopg.connect(**conninfo, row_factory=dict_row)
+
 
 
     # Force the session to UTC so TIMESTAMPTZ behaves predictably.
     conn.execute("SET TIME ZONE 'UTC'")
 
 
+
     return conn
+
 
 
 # ============================================================
 # FILTERS AND PERIOD
 # ============================================================
+
 
 
 SCOPE_CTE = """
@@ -227,8 +255,10 @@ WITH scope AS (
 """
 
 
+
 def get_filter_options(conn):
     """Filter choices and the time extent of the data, all read from the database."""
+
 
 
     systems = [
@@ -245,6 +275,7 @@ def get_filter_options(conn):
     ]
 
 
+
     buildings = [
         {"building_id": row["building_id"], "name": row["name"]}
         for row in conn.execute(
@@ -253,7 +284,9 @@ def get_filter_options(conn):
     ]
 
 
+
     first, last = _data_extent(conn)
+
 
 
     return {
@@ -264,8 +297,10 @@ def get_filter_options(conn):
     }
 
 
+
 def _data_extent(conn):
     """Return the first and last timestamps present in telemetry or events."""
+
 
 
     row = conn.execute(
@@ -280,22 +315,27 @@ def _data_extent(conn):
     ).fetchone()
 
 
+
     if row["first_ts"] is None:
         raise NoDataError("The database has no telemetry or events.")
+
 
 
     # Postgres already returns timezone-aware datetime objects.
     return row["first_ts"], row["last_ts"]
 
 
+
 def resolve_filters(conn, system_type, building_id, start_time, end_time):
     """Validate filters. Defaults and coverage boundaries come from the data."""
+
 
 
     if system_type is not None and system_type not in SYSTEM_CODES:
         raise DashboardError(
             f"Unknown system_type. Allowed values: {', '.join(SYSTEM_CODES)}."
         )
+
 
 
     if building_id is not None:
@@ -305,11 +345,14 @@ def resolve_filters(conn, system_type, building_id, start_time, end_time):
         ).fetchone()
 
 
+
         if exists is None:
             raise DashboardError("Unknown building_id.")
 
 
+
     first, last = _data_extent(conn)
+
 
 
     try:
@@ -323,14 +366,17 @@ def resolve_filters(conn, system_type, building_id, start_time, end_time):
         raise DashboardError(str(exc)) from exc
 
 
+
     if start >= end:
         raise DashboardError("start_time must be earlier than end_time.")
+
 
 
     if end - start > timedelta(days=MAX_RANGE_DAYS):
         raise DashboardError(
             f"The period may not be longer than {MAX_RANGE_DAYS} days."
         )
+
 
 
     return {
@@ -343,6 +389,7 @@ def resolve_filters(conn, system_type, building_id, start_time, end_time):
     }
 
 
+
 def _params(f):
     """Convert filter dict into parameters ready for psycopg."""
     return {
@@ -353,20 +400,16 @@ def _params(f):
     }
 
 
-def hourly_slots(start, end):
-    """Number of top-of-the-hour instants t with start <= t < end."""
-    first = math.ceil(start.timestamp() / 3600)
-    after_last = math.ceil(end.timestamp() / 3600)
-    return max(0, after_last - first)
-
 
 # ============================================================
 # KPI HELPERS
 # ============================================================
 
 
+
 def _monitored_assets(conn, params):
     """Count assets matching the current system/building filters."""
+
 
 
     row = conn.execute(
@@ -379,12 +422,15 @@ def _monitored_assets(conn, params):
     ).fetchone()
 
 
+
     return int(row["monitored_assets"])
+
 
 
 def _asset_status_counts(conn, params):
     """
     Return status counts for the filtered assets.
+
 
 
     Priority:
@@ -393,6 +439,7 @@ def _asset_status_counts(conn, params):
     3. warning: at least one warning event in period
     4. normal: everything else
     """
+
 
 
     rows = conn.execute(
@@ -471,35 +518,50 @@ def _asset_status_counts(conn, params):
     ).fetchall()
 
 
+
     counts = {status: 0 for status in STATUS_ORDER}
+
 
 
     for row in rows:
         counts[row["status"]] += 1
 
 
+
     return counts
 
 
+
 def _alert_counts(conn, params):
-    """Return warning/critical event counts for the selected period."""
+    """Return warning/critical event counts for the filtered assets."""
+
 
 
     row = conn.execute(
-        """
+        SCOPE_CTE
+        + """
+        , filtered_events AS (
+            SELECT
+                er.event_id,
+                er.severity
+            FROM event_records AS er
+            JOIN scope AS s
+              ON s.asset_id = er.asset_id
+            WHERE er.ts >= %(start)s
+              AND er.ts < %(end)s
+        )
         SELECT
             COUNT(*) FILTER (
-                WHERE er.severity IN ('warning', 'critical')
+                WHERE severity IN ('warning', 'critical')
             ) AS alerts_raised,
             COUNT(*) FILTER (
-                WHERE er.severity = 'critical'
+                WHERE severity = 'critical'
             ) AS critical_alerts
-        FROM event_records AS er
-        WHERE er.ts >= %(start)s
-          AND er.ts < %(end)s
+        FROM filtered_events
         """,
         params,
     ).fetchone()
+
 
 
     return {
@@ -510,6 +572,7 @@ def _alert_counts(conn, params):
 
 def _average_metric(conn, params, metric_name):
     """Return the average telemetry value for one metric, or None."""
+
 
 
     row = conn.execute(
@@ -537,11 +600,14 @@ def _average_metric(conn, params, metric_name):
     ).fetchone()
 
 
+
     if row["average_value"] is None:
         return None
 
 
+
     return float(row["average_value"])
+
 
 
 def _heartbeat_compliance(conn, filters, params):
@@ -551,29 +617,45 @@ def _heartbeat_compliance(conn, filters, params):
 
     Expected heartbeats:
         heartbeat-sending assets
-        x whole-hour instants in the intersection of:
+        x hourly heartbeat opportunities in the intersection of:
         - selected period
         - available dataset coverage
+
+
+    Heartbeats occur once per hour. Both the first and last possible
+    heartbeat timestamps are included when they fall inside the period.
     """
+
 
 
     data_start = filters["data_start"]
     data_end_exclusive = filters["data_end_exclusive"]
 
 
+
     overlap_start = max(filters["start"], data_start)
     overlap_end = min(filters["end"], data_end_exclusive)
 
 
-    expected_slots = hourly_slots(overlap_start, overlap_end)
+
+    overlap_seconds = (
+        overlap_end - overlap_start
+    ).total_seconds()
 
 
-    if expected_slots == 0:
+
+    if overlap_seconds <= 0:
         return {
             "received": 0,
             "expected": 0,
             "compliance_pct": None,
         }
+
+
+
+    # One heartbeat opportunity per hour, including both period boundaries.
+    expected_slots = int(overlap_seconds // 3600) + 1
+
 
 
     row = conn.execute(
@@ -587,6 +669,8 @@ def _heartbeat_compliance(conn, filters, params):
             JOIN scope AS s
               ON s.asset_id = er.asset_id
             WHERE et.name = 'heartbeat'
+              AND er.ts >= %(start)s
+              AND er.ts < %(end)s
         ),
         received AS (
             SELECT COUNT(*) AS received_count
@@ -607,9 +691,11 @@ def _heartbeat_compliance(conn, filters, params):
     ).fetchone()
 
 
+
     sending_assets = int(row["sending_assets"])
     received = int(row["received_count"])
     expected = sending_assets * expected_slots
+
 
 
     if expected == 0:
@@ -620,7 +706,9 @@ def _heartbeat_compliance(conn, filters, params):
         }
 
 
+
     compliance = min(100.0, (received / expected) * 100.0)
+
 
 
     return {
@@ -630,9 +718,11 @@ def _heartbeat_compliance(conn, filters, params):
     }
 
 
+
 # ============================================================
 # MAIN DASHBOARD FUNCTION
 # ============================================================
+
 
 
 def get_dashboard_summary(
@@ -647,6 +737,7 @@ def get_dashboard_summary(
     """
 
 
+
     filters = resolve_filters(
         conn,
         system_type=system_type,
@@ -656,15 +747,19 @@ def get_dashboard_summary(
     )
 
 
+
     params = _params(filters)
+
 
 
     monitored_assets = _monitored_assets(conn, params)
     status_counts = _asset_status_counts(conn, params)
 
 
+
     healthy_assets = status_counts["normal"]
     healthy_assets_pct = None
+
 
 
     if monitored_assets > 0:
@@ -674,10 +769,13 @@ def get_dashboard_summary(
         )
 
 
+
     alert_counts = _alert_counts(conn, params)
 
 
+
     period_hours = (filters["end"] - filters["start"]).total_seconds() / 3600.0
+
 
 
     alert_rate = None
@@ -688,11 +786,13 @@ def get_dashboard_summary(
         )
 
 
+
     avg_zone_temp = _average_metric(
         conn,
         params,
         ZONE_TEMP_METRIC,
     )
+
 
 
     avg_packet_loss = _average_metric(
@@ -702,11 +802,13 @@ def get_dashboard_summary(
     )
 
 
+
     heartbeat = _heartbeat_compliance(
         conn,
         filters,
         params,
     )
+
 
 
     return {
