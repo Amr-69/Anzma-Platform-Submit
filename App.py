@@ -6,6 +6,7 @@ import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from psycopg import OperationalError
 
@@ -32,6 +33,11 @@ import pipeline
 
 
 asgi_app = FastAPI(title="Anzma Dashboard API")
+
+
+@asgi_app.get("/")
+def dashboard():
+    return FileResponse("static/index.html")
 
 
 def day2_connect():
