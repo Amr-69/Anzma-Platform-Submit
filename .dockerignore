@@ -1,0 +1,10 @@
+.git
+.env
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+docs/
+*.md
+review_explain.txt
+test_results.json
