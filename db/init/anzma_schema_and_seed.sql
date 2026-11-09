@@ -264,9 +264,6 @@ SELECT v.rule_id, v.method, v.severity, v.asset_id, v.title, v.summary,
        a.t0 - v.resolved_min * interval '1 minute'
 FROM seed_anchor a
 CROSS JOIN (VALUES
-    ('HVAC-TEMP-HIGH',   'threshold', 'critical', 2,  'CRAC 1 temperature above 28 C',
-     'Temperature stayed above the threshold for about 90 minutes.',
-     1260, 1170, 1255, '{"metric":"temperature","threshold":28,"peak":33.0}', 'resolved', 1170),
     ('NET-PKTLOSS-ANOM', 'anomaly',   'warning',  4,  'Core Switch 1 packet loss anomaly',
      'Packet loss deviated strongly from its baseline.',
      1860, 1830, 1855, '{"metric":"packet_loss","method":"mad_zscore","z":8.4}', 'resolved', 1830),
