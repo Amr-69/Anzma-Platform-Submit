@@ -32,9 +32,10 @@
       box-shadow: 0 2px 8px rgba(0,0,0,.08);
     }
     h2 { margin-top: 0; font-size: 18px; }
-    .row { display: flex; gap: 10px; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; }
     input {
       flex: 1;
+      min-width: 280px;
       padding: 12px;
       border: 1px solid #ccd4dc;
       border-radius: 6px;
@@ -83,32 +84,39 @@
     <p>Operational intelligence for smart buildings</p>
   </header>
 
+
   <main>
     <section class="card">
       <h2>Ask Anzma AI</h2>
       <div class="row">
         <input id="question" value="Why is CRAC 1 temperature high?" />
-        <button id="ask-button">Ask</button>
+        <button id="ask-live-button">Live model</button>
+        <button id="ask-fallback-button">Deterministic fallback</button>
       </div>
       <p class="muted">
         Day 2 demo: CRAC, HVAC, temperature, and cooling questions are supported.
       </p>
     </section>
 
+
     <section class="card" id="result-card" style="display:none">
       <h2>Operational answer</h2>
       <div id="badges"></div>
       <div id="answer" class="answer"></div>
 
+
       <h3>Supporting evidence</h3>
       <div id="evidence" class="muted"></div>
+
 
       <h3>Recommended actions</h3>
       <ul id="recommendations"></ul>
 
+
       <h3>Limitations</h3>
       <div id="limitations" class="muted"></div>
     </section>
+
 
     <section class="card">
       <h2>Open incidents</h2>
@@ -116,9 +124,11 @@
     </section>
   </main>
 
+
   <script>
     const questionInput = document.getElementById("question");
-    const askButton = document.getElementById("ask-button");
+    const askLiveButton = document.getElementById("ask-live-button");
+    const askFallbackButton = document.getElementById("ask-fallback-button");
     const resultCard = document.getElementById("result-card");
     const badges = document.getElementById("badges");
     const answer = document.getElementById("answer");
@@ -127,16 +137,19 @@
     const limitations = document.getElementById("limitations");
     const incidents = document.getElementById("incidents");
 
+
     async function loadIncidents() {
       try {
         const response = await fetch("/incidents");
         const data = await response.json();
         incidents.innerHTML = "";
 
+
         if (!data.incidents || data.incidents.length === 0) {
           incidents.textContent = "No incidents are currently available.";
           return;
         }
+
 
         for (const incident of data.incidents) {
           const item = document.createElement("div");
@@ -154,13 +167,17 @@
       }
     }
 
-    askButton.addEventListener("click", async () => {
+
+    async function runAsk(useLlm, button) {
       const question = questionInput.value.trim();
       if (!question) return;
 
-      askButton.disabled = true;
-      askButton.textContent = "Analyzing…";
+
+      const originalText = button.textContent;
+      button.disabled = true;
+      button.textContent = "Analyzing…";
       resultCard.style.display = "none";
+
 
       try {
         const response = await fetch("/ask", {
@@ -168,25 +185,43 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             question: question,
-            use_llm: false
+            use_llm: useLlm
           })
         });
 
+
         const data = await response.json();
+
 
         if (!response.ok) {
           throw new Error(data.detail || "The request failed.");
         }
 
+
+        const validationLabel =
+          data.validation.status === "validated"
+            ? "grounding checks passed"
+            : data.validation.status;
+
+
         badges.innerHTML = `
           <span class="badge ${data.validation.status === "validated" ? "validated" : "not-validated"}">
-            ${data.validation.status}
+            ${validationLabel}
           </span>
           <span class="badge fallback">${data.ai_source}</span>
           <span class="badge fallback">${data.data_sufficiency}</span>
         `;
 
+
+        if (data.model_used) {
+          badges.innerHTML += `
+            <span class="badge fallback">model: ${data.model_used}</span>
+          `;
+        }
+
+
         answer.textContent = data.answer;
+
 
         evidence.innerHTML = data.evidence.length
           ? data.evidence.map(item => `
@@ -199,6 +234,7 @@
             `).join("")
           : "No evidence is available for this answer.";
 
+
         recommendations.innerHTML = data.recommendations.length
           ? data.recommendations.map(item => `
               <li>
@@ -209,9 +245,11 @@
             `).join("")
           : "<li>No approved recommendation is available.</li>";
 
+
         limitations.innerHTML = data.limitations.length
           ? data.limitations.map(item => `<div>• ${item}</div>`).join("")
           : "No limitations reported.";
+
 
         resultCard.style.display = "block";
         loadIncidents();
@@ -223,10 +261,15 @@
         recommendations.innerHTML = "";
         limitations.innerHTML = "";
       } finally {
-        askButton.disabled = false;
-        askButton.textContent = "Ask";
+        button.disabled = false;
+        button.textContent = originalText;
       }
-    });
+    }
+
+
+    askLiveButton.addEventListener("click", () => runAsk(true, askLiveButton));
+    askFallbackButton.addEventListener("click", () => runAsk(false, askFallbackButton));
+
 
     loadIncidents();
   </script>
