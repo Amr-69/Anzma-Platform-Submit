@@ -253,32 +253,6 @@ CROSS JOIN (VALUES
     (10, 8, 120, 'critical', '{"zone":"Corridor 2","demo":true}')
 ) AS v(asset_id, event_type_id, mins_ago, severity, details);
 
--- Alerts (mixed lifecycle: resolved / acknowledged / open)
-INSERT INTO alerts (rule_id, detection_method, severity, asset_id, title, summary,
-                    first_ts, last_ts, detected_ts, evidence, status, resolved_ts)
-SELECT v.rule_id, v.method, v.severity, v.asset_id, v.title, v.summary,
-       a.t0 - v.first_min * interval '1 minute',
-       a.t0 - v.last_min * interval '1 minute',
-       a.t0 - v.detected_min * interval '1 minute',
-       v.evidence::jsonb, v.status,
-       a.t0 - v.resolved_min * interval '1 minute'
-FROM seed_anchor a
-CROSS JOIN (VALUES
-    ('NET-PKTLOSS-ANOM', 'anomaly',   'warning',  4,  'Core Switch 1 packet loss anomaly',
-     'Packet loss deviated strongly from its baseline.',
-     1860, 1830, 1855, '{"metric":"packet_loss","method":"mad_zscore","z":8.4}', 'resolved', 1830),
-    ('ACS-BRUTE-FORCE',  'compound',  'critical', 7,  'Repeated access denials at Server Room',
-     'Three denied badge attempts within 10 minutes.',
-     1560, 1550, 1550, '{"event":"access_denied","count":3,"window_min":10}', 'acknowledged', NULL::int),
-    ('FIRE-ACTIVE',      'threshold', 'critical', 10, 'Fire alarm active at Fire Panel Main',
-     'Fire alarm triggered and not cleared.',
-     120, 120, 119, '{"event":"fire_alarm_triggered","demo":true}', 'open', NULL),
-    ('CCTV-OFFLINE',     'threshold', 'warning',  9,  'Control Room Camera offline',
-     'No heartbeat or video data for more than 4 hours.',
-     300, 300, 295, '{"event":"camera_offline"}', 'open', NULL)
-) AS v(rule_id, method, severity, asset_id, title, summary,
-       first_min, last_min, detected_min, evidence, status, resolved_min);
-
 -- Reset identity counters after inserting explicit ids
 SELECT setval(pg_get_serial_sequence('buildings','building_id'),       (SELECT MAX(building_id)    FROM buildings));
 SELECT setval(pg_get_serial_sequence('locations','location_id'),       (SELECT MAX(location_id)    FROM locations));
