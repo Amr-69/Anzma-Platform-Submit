@@ -76,8 +76,17 @@ def C(cid, text, requires=None):
     return {"id": cid, "text": text, "requires": requires}
 
 
-def A(aid, priority, text, when=None):
-    return {"id": aid, "priority": priority, "text": text, "when": when}
+# Playbook approval. Only actions with status "approved" are ever recommended; "draft" actions are never returned,
+# never offered to the model and are rejected by the validator as unapproved. Every action names its approver.
+# PLACEHOLDER: the Day 2 actions below were written by the module owner and carry his name as approver; replace
+# DEFAULT_APPROVER / per-action approvers with the engineer who really signs them off.
+APPROVED, DRAFT = "approved", "draft"
+DEFAULT_APPROVER = "Ahmed (Day 2 playbook owner)"
+
+
+def A(aid, priority, text, when=None, status=APPROVED, approver=DEFAULT_APPROVER):
+    assert status in (APPROVED, DRAFT), status
+    return {"id": aid, "priority": priority, "text": text, "when": when, "status": status, "approver": approver}
 
 
 PLAYBOOKS = {

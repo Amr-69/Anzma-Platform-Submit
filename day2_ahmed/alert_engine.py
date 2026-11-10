@@ -8,7 +8,10 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from statistics import mean, median
 
-from psycopg2.extras import Json, execute_values
+try:                                   # legacy store_alerts() only; the unified schema goes through db_adapter
+    from psycopg2.extras import Json, execute_values
+except ImportError:                    # psycopg (v3) only installations
+    Json = execute_values = None
 
 import alert_config as cfg
 
@@ -439,7 +442,7 @@ RULE_FUNCS = [
 
 
 def run_engine(cur, start, end):
-    import db_adapter                      # unified schema (migrations/001); the old load_context below is legacy
+    import db_adapter                      # unified schema (anzma_schema_and_seed.sql); the old load_context below is legacy
     ctx = db_adapter.load_context(cur, end, cfg.HISTORY_DAYS)
     alerts = []
     for fn in RULE_FUNCS:

@@ -4,7 +4,7 @@ Builds incident explanations from an alert's stored evidence.
 
 - The local LLM (Ollama) only sees the evidence package and a list of allowed
   causes and actions that were already filtered by the measured facts.
-- Its answer is validated: every number, time and date must appear in the
+- Its answer is grounding-checked (not semantically verified): every number, time and date must appear in the
   evidence, every citation must exist, and chosen ids must come from the lists.
 - If the model is unavailable or its answer fails validation, a deterministic
   explanation built from the same evidence and playbook is returned instead.
@@ -81,8 +81,11 @@ def eligible(rule_id, facts):
                            "supported_by": cfg.describe(facts, c["requires"]) or ["generic possibility for this rule"]})
     actions = []
     for a in book["actions"]:
+        if a.get("status") != cfg.APPROVED:        # draft (or unlabelled) actions are never offered
+            continue
         if cfg.holds(facts, a["when"]):
             actions.append({"id": a["id"], "priority": a["priority"], "text": a["text"],
+                            "status": a["status"], "approver": a["approver"],
                             "because": cfg.describe(facts, a["when"]) or ["standard response for this rule"]})
     actions.sort(key=lambda a: a["priority"])
     return causes, actions

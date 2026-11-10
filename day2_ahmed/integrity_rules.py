@@ -145,7 +145,7 @@ if __name__ == "__main__":
 
 
 # ---------------------------------------------------------------------------------------------------------------
-# Unified-schema checks (migrations/001): the database holds the compatibility tables but does NOT enforce them on
+# Unified-schema checks (anzma_schema_and_seed.sql): the database holds the compatibility tables but does NOT enforce them on
 # INSERT (DATA_MODEL.md "Rules NOT enforced"). These two functions are what ingestion calls and what the tests use.
 # ---------------------------------------------------------------------------------------------------------------
 def check_record_db(cur, asset_id, kind, name):

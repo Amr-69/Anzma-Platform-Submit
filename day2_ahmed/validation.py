@@ -1,9 +1,13 @@
 """
-validation.py  (Day 2 - Ahmed: evidence validation and AI reliability)
+validation.py  (Day 2 - Ahmed: evidence grounding and AI reliability)
 
-Aligned with API_CONTRACT.md section 8:
-  validation = {"status": validated|not_validated|failed, "checks_run": [...], "errors": [...], "attempts": n}
-  "validated" only when checks_run is non-empty and every check passed.
+Aligned with API_CONTRACT.md section 8, with ONE contract change (see CONTRACT_CHANGES.md):
+  validation = {"status": grounding_supported|not_validated|failed, "scope": "grounding",
+                "checks_run": [...], "errors": [...], "attempts": n}
+  "grounding_supported" only when checks_run is non-empty and every check passed. It means: every number, time,
+  date and citation in the text exists in the stored evidence, and every cause/action comes from the approved
+  playbook. It does NOT mean the explanation is semantically correct; nothing here is called "validated"
+  because no independent semantic check exists.
   data_sufficiency : complete | partial | no_data
   ai_source        : llm | fallback | rules
   references       : {"assets": [ids], "incidents": [ids]}
@@ -15,7 +19,8 @@ semantic check of meaning - see the note in the hand-over about DATA_MODEL rule 
 import ai_explainer as ai
 import recommendations as recs
 
-VALIDATED, FAILED, NOT_VALIDATED = "validated", "failed", "not_validated"
+GROUNDING_SUPPORTED, FAILED, NOT_VALIDATED = "grounding_supported", "failed", "not_validated"
+SCOPE = "grounding"
 COMPLETE, PARTIAL, NO_DATA = "complete", "partial", "no_data"
 AI_SOURCE = {"OLLAMA": "llm", "FALLBACK": "fallback", "RULES": "rules"}
 
@@ -71,20 +76,20 @@ def validate_explanation(alert, asset, explanation, attempts=1):
     for r in explanation.get("evidence_refs", []):
         if r not in refs:
             errors.append(f"evidence ref {r} does not exist")
-    return {"status": FAILED if errors else VALIDATED, "checks_run": list(ALERT_CHECKS),
-            "errors": errors, "attempts": attempts}
+    return {"status": FAILED if errors else GROUNDING_SUPPORTED, "scope": SCOPE,
+            "checks_run": list(ALERT_CHECKS), "errors": errors, "attempts": attempts}
 
 
 def standard_response(*, answer, evidence, references, model_used, tool_used, ai_source, data_sufficiency,
                       validation, limitations, window=None, language="en"):
-    """Contract envelope. Refuses 'validated' unless checks ran and nothing failed."""
+    """Contract envelope. Refuses 'grounding_supported' unless checks ran and nothing failed."""
     status = (validation or {}).get("status", NOT_VALIDATED)
-    if status == VALIDATED and (not validation.get("checks_run") or validation.get("errors")):
-        raise ValueError("'validated' requires recorded checks and no errors")
+    if status == GROUNDING_SUPPORTED and (not validation.get("checks_run") or validation.get("errors")):
+        raise ValueError("'grounding_supported' requires recorded checks and no errors")
     return {"answer": answer, "language": language, "tool_used": tool_used, "model_used": model_used,
             "ai_source": ai_source, "data_sufficiency": data_sufficiency, "window": window,
             "evidence": evidence, "references": references, "validation": validation or
-            {"status": NOT_VALIDATED, "checks_run": [], "errors": [], "attempts": 0},
+            {"status": NOT_VALIDATED, "scope": SCOPE, "checks_run": [], "errors": [], "attempts": 0},
             "limitations": limitations}
 
 
@@ -94,36 +99,82 @@ def _refs(alert, asset):
     return {"assets": [aid] if aid is not None else [], "incidents": [inc] if inc is not None else []}
 
 
-def explain_alert(alert, asset, use_llm=True):
-    """Alert -> explanation -> independent validation -> contract response (+ playbook recommendations)."""
+def freshness_limitation(as_of):
+    """as_of: datetime or ISO string, or None."""
+    if as_of is None:
+        return None
+    text = as_of.strftime("%Y-%m-%d %H:%M") if hasattr(as_of, "strftime") else str(as_of)[:16].replace("T", " ")
+    return f"Data is current only up to {text} UTC (the latest stored record); later events are not reflected."
+
+
+def _verification_summary(verification):
+    if verification is None:
+        return None
+    return {"checked": verification["total"], "verified": verification["verified"],
+            "unverified": len(verification["unverified"]), "problems": verification["unverified"]}
+
+
+def explain_alert(alert, asset, use_llm=True, verification=None, as_of=None):
+    """Alert -> explanation -> grounding check -> contract response (+ playbook recommendations).
+
+    verification: result of evidence.alert_evidence() (rows re-read from the fact tables). When given, the evidence
+    returned is that verified list, and any unverified row stops the explanation: nothing is explained or
+    recommended from evidence that no longer matches the stored records.
+    as_of: timestamp of the latest stored record; adds a freshness limitation.
+    """
+    fresh = freshness_limitation(as_of)
+    summary = _verification_summary(verification)
+
+    if verification is not None and verification["unverified"]:
+        n_bad, n = len(verification["unverified"]), verification["total"]
+        limitations = [f"{n_bad} of {n} evidence rows could not be verified against the stored records, so no "
+                       f"explanation or recommendation is produced from this alert's evidence."]
+        if fresh:
+            limitations.append(fresh)
+        errors = [f"evidence {u['ref']}: {u['problem']}" for u in verification["unverified"]]
+        return standard_response(
+            answer=alert.get("summary", ""), evidence=verification["events"], references=_refs(alert, asset),
+            model_used=None, tool_used="explain_alert", ai_source="rules",
+            data_sufficiency=PARTIAL if verification["verified"] else NO_DATA,
+            validation={"status": FAILED, "scope": SCOPE, "checks_run": ["evidence_row_verified"],
+                        "errors": errors, "attempts": 0},
+            limitations=limitations) | {"recommendations": [], "probable_causes": [], "evidence_verification": summary}
+
     rec = recs.recommend(alert)
     sufficiency, limitations = assess_evidence(alert.get("evidence"), causes_supported=bool(rec["probable_causes"]))
     limitations = limitations + rec["limitations"]
+    if fresh:
+        limitations.append(fresh)
 
     if sufficiency == NO_DATA:
         return standard_response(
             answer=f"The database does not hold enough evidence to explain this alert. {alert.get('summary', '')}".strip(),
             evidence=[], references=_refs(alert, asset), model_used=None, tool_used="explain_alert",
             ai_source="rules", data_sufficiency=sufficiency,
-            validation={"status": NOT_VALIDATED, "checks_run": [], "errors": [], "attempts": 0},
-            limitations=limitations) | {"recommendations": [], "probable_causes": []}
+            validation={"status": NOT_VALIDATED, "scope": SCOPE, "checks_run": [], "errors": [], "attempts": 0},
+            limitations=limitations) | {"recommendations": [], "probable_causes": [],
+                                        "evidence_verification": summary}
 
     explanation = ai.explain(alert, asset, use_llm=use_llm)
     g = explanation.get("grounding", {})
     attempts = g.get("attempts") or (len(g.get("rejected_answers", [])) or 0)
     validation = validate_explanation(alert, asset, explanation, attempts=attempts)
+    if verification is not None:
+        validation["checks_run"] = ["evidence_row_verified"] + validation["checks_run"]
     if g.get("llm_attempted") and explanation["source"] == "FALLBACK":
         limitations.append("The language model was unavailable or its answer was rejected; this explanation was "
                            "built deterministically from the stored evidence.")
     if validation["status"] == FAILED:
-        limitations.append("The explanation failed validation, so only the raw alert summary is shown.")
+        limitations.append("The explanation failed the grounding check, so only the raw alert summary is shown.")
         answer = alert.get("summary", "")
     else:
         answer = explanation["summary"]
 
+    evidence = verification["events"] if verification is not None else (alert.get("evidence") or {}).get("events", [])
     return standard_response(
-        answer=answer, evidence=(alert.get("evidence") or {}).get("events", []), references=_refs(alert, asset),
+        answer=answer, evidence=evidence, references=_refs(alert, asset),
         model_used=explanation.get("model"), tool_used="explain_alert",
         ai_source=AI_SOURCE[explanation["source"]], data_sufficiency=sufficiency,
         validation=validation, limitations=limitations) | {
-        "recommendations": rec["recommendations"], "probable_causes": rec["probable_causes"]}
+        "recommendations": rec["recommendations"], "probable_causes": rec["probable_causes"],
+        "evidence_verification": summary}

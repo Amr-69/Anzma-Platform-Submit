@@ -1,34 +1,3 @@
-PASS  integrity: the seed breaks no compatibility rule
-PASS  integrity: ingestion check rejects an incompatible metric/event for the asset's system
-PASS  alerts: every injected fault becomes a stored alert with the right rule
-PASS  alerts: no false positives - healthy assets raise nothing
-PASS  alerts: severities follow the thresholds and are stored lowercase
-PASS  incidents: every alert belongs to an incident of its own location, severity = worst alert
-PASS  incidents: related alerts of one fault are grouped (CRAC threshold + anomaly alert -> one incident)
-PASS  incidents: alerts far apart in time stay in separate incidents (same location, > 15 min)
-PASS  incidents: pure grouping rule (location + 15-minute gap)
-PASS  incidents: ranked by severity, then status, then recency
-PASS  pipeline: running detection again creates no duplicate alerts or incidents
-PASS  evidence: every incident's evidence is complete, linked to stored rows and verified against the fact tables
-PASS  evidence: a tampered copy is detected (timestamp or value no longer matches the stored row)
-PASS  evidence: temperature alerts are backed by telemetry rows, door/camera/fire alerts by event rows
-PASS  validation: deterministic explanation of a stored alert is validated because checks really ran
-PASS  validation: an invented reading is rejected (stored alert)
-PASS  validation: an invented cause or unapproved action is rejected
-PASS  recommendations: only playbook actions whose conditions hold, linked to the alert's evidence refs
-PASS  recommendations: an incident's actions are the merged playbook actions of its alerts
-PASS  data sufficiency: 'partial' with a limitation when the stored data cannot name a cause (denial reasons missing)
-PASS  data sufficiency: an alert without stored evidence is no_data, not_validated, nothing recommended
-PASS  missing data: the camera that stopped reporting yields an alert from its offline events, never invented readings
-PASS  missing data: removing an asset's readings produces no alert and no crash
-PASS  lifecycle: open -> acknowledged -> resolved carries over to the alerts; resolved is final
-PASS  lifecycle: skipping straight from open to resolved is allowed; unknown incident raises
-PASS  lifecycle: a resolved incident is not reopened by a new alert (a new incident is opened)
-PASS  fallback: Ollama unreachable -> validated deterministic answer, limitation stated, stored as 'fallback'
-PASS  pipeline: explain_incident returns verified evidence, one validated explanation per alert and the actions
-
-28/28 passed
-detection run: {'window': "{'from': datetime.datetime(2026, 10, 10, 11, 30, tzinfo=datetime.timezone.utc), 'to': datetime.datetime(2026, 11, 9, 11, 30, tzinfo=datetime.timezone.utc)}", 'detected': 11, 'new_alerts': 11, 'incidents_created': 9, 'alerts_attached': 2}
 PASS  integrity: every event type the generator/scenarios emit is valid for its system
 PASS  integrity: incompatible event/equipment pairs are rejected (e.g. SMOKE_DETECTED on a chiller)
 PASS  integrity: alert rules cannot be raised on incompatible equipment
@@ -40,15 +9,113 @@ PASS  alerts: normal operation produces no alert (no false positives)
 PASS  alerts: every alert's evidence is traceable to real events and compatible with the asset
 PASS  recommendations: derived only from playbook rules whose conditions hold, linked to evidence
 PASS  recommendations: unknown rule or empty evidence yields no recommendation and a limitation
-PASS  validation: deterministic explanation is validated only because the check really ran
+PASS  validation: deterministic explanation is grounding_supported only because the checks really ran
 PASS  validation: an invented reading is rejected
 PASS  validation: invented cause, unapproved action and unknown citation are rejected
 PASS  validation: a cause whose condition does not hold is rejected (FILTER_BLOCKAGE without a filter fault)
-PASS  validation: no stored evidence -> insufficient, never validated, with a limitation
-PASS  validation: validated is refused when errors are present, and 'partial' is used when no cause is supported
-PASS  validation: standard_response refuses 'validated' without recorded checks
+PASS  validation: no stored evidence -> insufficient, never grounding_supported, with a limitation
+PASS  validation: grounding_supported is refused when errors are present, and 'partial' is used when no cause is supported
+PASS  validation: standard_response refuses 'grounding_supported' without recorded checks
 PASS  validation: truncated evidence is disclosed as a limitation
-PASS  fallback: Ollama unreachable -> deterministic validated answer with the limitation stated
+PASS  fallback: Ollama unreachable -> deterministic grounding_supported answer with the limitation stated
 PASS  missing data: a gap in readings does not invent an alert or a reading
+PASS  D4: the success status is 'grounding_supported' with scope 'grounding'; 'validated' no longer exists
+PASS  playbook: every action carries a status and an approver
+PASS  playbook: a DRAFT action is never recommended, never eligible and is rejected by the validator
+PASS  freshness: as_of adds a limitation to an explanation
 
-21/21 passed
+25/25 passed
+
+PASS  integrity: the seed breaks no compatibility rule
+PASS  integrity: ingestion check rejects an incompatible metric/event for the asset's system
+PASS  seed: a fresh database holds no alerts and no incidents, and no hand-written/demo rows
+PASS  seed: 003 only adds the incidents table and alerts.incident_id (and is idempotent)
+PASS  schema: every table/column the Day 2 modules use exists in the authoritative schema
+PASS  S1: the CRAC high-temperature fault gives an alert and its incident; no active fire alert/incident exists
+PASS  alerts: every injected fault becomes a stored alert with the right rule
+PASS  alerts: no false positives - healthy assets raise nothing
+PASS  alerts: severities follow the thresholds and are stored lowercase
+PASS  incidents: every alert belongs to an incident of its own location, severity = worst alert
+PASS  incidents: related alerts of one fault are grouped (CRAC threshold + anomaly alert -> one incident)
+PASS  incidents: alerts far apart in time stay in separate incidents (same asset, > 15 min)
+PASS  incidents: pure grouping rule (same asset or same system+location, AND within 15 minutes)
+PASS  incidents: probe - a CRAC, a switch and a door alert in the SAME room within 15 min -> 3 separate incidents
+PASS  incidents: ranked by severity, then status, then recency
+PASS  pipeline: running detection again creates no duplicate alerts or incidents
+PASS  evidence: every incident's evidence is complete, linked to stored rows and verified against the fact tables
+PASS  evidence: a tampered copy is detected (timestamp or value no longer matches the stored row)
+PASS  evidence: temperature alerts are backed by telemetry rows, door/camera/fire alerts by event rows
+PASS  validation: deterministic explanation of a stored alert is grounding_supported because checks really ran
+PASS  validation: an invented reading is rejected (stored alert)
+PASS  validation: an invented cause or unapproved action is rejected
+PASS  recommendations: only playbook actions whose conditions hold, linked to the alert's evidence refs
+PASS  recommendations: an incident's actions are the merged playbook actions of its alerts
+PASS  data sufficiency: 'partial' with a limitation when the stored data cannot name a cause (denial reasons missing)
+PASS  data sufficiency: an alert without stored evidence is no_data, not_validated, nothing recommended
+PASS  missing data: the camera that stopped reporting yields an alert from its offline events, never invented readings
+PASS  missing data: removing an asset's readings produces no alert and no crash
+PASS  lifecycle: open -> acknowledged -> resolved carries over to the alerts; resolved is final
+PASS  lifecycle: skipping straight from open to resolved is allowed; unknown incident raises
+PASS  lifecycle: a resolved incident is not reopened by a new alert (a new incident is opened)
+PASS  fallback: Ollama unreachable -> grounding_supported deterministic answer, limitation stated, stored as 'fallback'
+PASS  pipeline: explain_incident returns verified evidence, one grounding-checked explanation per alert and the actions
+PASS  D4: no response is ever labelled 'validated'; success is 'grounding_supported' with scope 'grounding'
+PASS  evidence: alert_evidence re-reads every row from the fact tables and flags each as verified
+PASS  C12: explain_alert reports verified rows and a zero unverified count on untouched data
+PASS  C12: a tampered FACT-TABLE value is reported as unverified; no grounding_supported, no recommendations
+PASS  C12: a tampered FACT-TABLE timestamp is reported as unverified
+PASS  C12: a tampered JSON copy inside the alert is reported as unverified in the single-alert path
+PASS  as_of: detect() returns the latest stored timestamp and a freshness limitation
+PASS  as_of: every explanation carries the freshness limitation
+PASS  driver: an unreachable database gives DatabaseUnavailable, not a raw driver exception
+PASS  driver: a connection lost mid-run (backend terminated) gives DatabaseUnavailable from the pipeline
+
+43/43 passed
+detection run: {'as_of': '2026-11-10T10:15:00+00:00', 'window': "{'from': datetime.datetime(2026, 10, 11, 10, 15, tzinfo=datetime.timezone.utc), 'to': datetime.datetime(2026, 11, 10, 10, 15, tzinfo=datetime.timezone.utc)}", 'detected': 10, 'new_alerts': 10, 'incidents_created': 8, 'alerts_attached': 2, 'limitations': ['Data is current only up to 2026-11-10 10:15 UTC (the latest stored record); later events are not reflected.']}
+--- same suite with psycopg v3 ---
+PASS  integrity: the seed breaks no compatibility rule
+PASS  integrity: ingestion check rejects an incompatible metric/event for the asset's system
+PASS  seed: a fresh database holds no alerts and no incidents, and no hand-written/demo rows
+PASS  seed: 003 only adds the incidents table and alerts.incident_id (and is idempotent)
+PASS  schema: every table/column the Day 2 modules use exists in the authoritative schema
+PASS  S1: the CRAC high-temperature fault gives an alert and its incident; no active fire alert/incident exists
+PASS  alerts: every injected fault becomes a stored alert with the right rule
+PASS  alerts: no false positives - healthy assets raise nothing
+PASS  alerts: severities follow the thresholds and are stored lowercase
+PASS  incidents: every alert belongs to an incident of its own location, severity = worst alert
+PASS  incidents: related alerts of one fault are grouped (CRAC threshold + anomaly alert -> one incident)
+PASS  incidents: alerts far apart in time stay in separate incidents (same asset, > 15 min)
+PASS  incidents: pure grouping rule (same asset or same system+location, AND within 15 minutes)
+PASS  incidents: probe - a CRAC, a switch and a door alert in the SAME room within 15 min -> 3 separate incidents
+PASS  incidents: ranked by severity, then status, then recency
+PASS  pipeline: running detection again creates no duplicate alerts or incidents
+PASS  evidence: every incident's evidence is complete, linked to stored rows and verified against the fact tables
+PASS  evidence: a tampered copy is detected (timestamp or value no longer matches the stored row)
+PASS  evidence: temperature alerts are backed by telemetry rows, door/camera/fire alerts by event rows
+PASS  validation: deterministic explanation of a stored alert is grounding_supported because checks really ran
+PASS  validation: an invented reading is rejected (stored alert)
+PASS  validation: an invented cause or unapproved action is rejected
+PASS  recommendations: only playbook actions whose conditions hold, linked to the alert's evidence refs
+PASS  recommendations: an incident's actions are the merged playbook actions of its alerts
+PASS  data sufficiency: 'partial' with a limitation when the stored data cannot name a cause (denial reasons missing)
+PASS  data sufficiency: an alert without stored evidence is no_data, not_validated, nothing recommended
+PASS  missing data: the camera that stopped reporting yields an alert from its offline events, never invented readings
+PASS  missing data: removing an asset's readings produces no alert and no crash
+PASS  lifecycle: open -> acknowledged -> resolved carries over to the alerts; resolved is final
+PASS  lifecycle: skipping straight from open to resolved is allowed; unknown incident raises
+PASS  lifecycle: a resolved incident is not reopened by a new alert (a new incident is opened)
+PASS  fallback: Ollama unreachable -> grounding_supported deterministic answer, limitation stated, stored as 'fallback'
+PASS  pipeline: explain_incident returns verified evidence, one grounding-checked explanation per alert and the actions
+PASS  D4: no response is ever labelled 'validated'; success is 'grounding_supported' with scope 'grounding'
+PASS  evidence: alert_evidence re-reads every row from the fact tables and flags each as verified
+PASS  C12: explain_alert reports verified rows and a zero unverified count on untouched data
+PASS  C12: a tampered FACT-TABLE value is reported as unverified; no grounding_supported, no recommendations
+PASS  C12: a tampered FACT-TABLE timestamp is reported as unverified
+PASS  C12: a tampered JSON copy inside the alert is reported as unverified in the single-alert path
+PASS  as_of: detect() returns the latest stored timestamp and a freshness limitation
+PASS  as_of: every explanation carries the freshness limitation
+PASS  driver: an unreachable database gives DatabaseUnavailable, not a raw driver exception
+PASS  driver: a connection lost mid-run (backend terminated) gives DatabaseUnavailable from the pipeline
+
+43/43 passed
+detection run: {'as_of': '2026-11-10T10:15:00+00:00', 'window': "{'from': datetime.datetime(2026, 10, 11, 10, 15, tzinfo=zoneinfo.ZoneInfo(key='Etc/UTC')), 'to': datetime.datetime(2026, 11, 10, 10, 15, tzinfo=zoneinfo.ZoneInfo(key='Etc/UTC'))}", 'detected': 10, 'new_alerts': 10, 'incidents_created': 8, 'alerts_attached': 2, 'limitations': ['Data is current only up to 2026-11-10 10:15 UTC (the latest stored record); later events are not reflected.']}

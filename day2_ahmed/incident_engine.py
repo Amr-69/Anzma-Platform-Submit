@@ -2,8 +2,13 @@
 incident_engine.py (Day 2 - Ahmed): alerts -> incidents, severity, ranking, lifecycle.
 
 Alert    = one detection by one rule on one asset (what the engine found).
-Incident = the managed record an operator works on: alerts of the SAME LOCATION whose time ranges are within
-           GROUP_GAP_MIN minutes of each other (grouping_rule 'same_location_within_15_min').
+Incident = the managed record an operator works on. Two alerts belong together only when they are LINKED and within
+           GROUP_GAP_MIN minutes of each other (grouping_rule 'same_asset_or_system_within_15_min'). Linked means:
+             - the same asset, or
+             - the same system type in the same location (e.g. two HVAC units of one plant room).
+           Different systems in one room (a CRAC, a switch and a door reader) are NOT linked: sharing a location
+           says nothing about a common cause. No parent/child dependency table exists in the schema yet; when one
+           is added, extend linked() and the SQL in assign_incidents() together.
 Severity of an incident = the highest severity of its alerts. Lifecycle: open -> acknowledged -> resolved
 (resolved is final). Acknowledging / resolving an incident carries over to its alerts.
 All database access goes through the cursor passed in; no SQL lives anywhere else for incidents.
@@ -15,7 +20,7 @@ import db_adapter as da
 import recommendations as recs
 
 GROUP_GAP_MIN = 15
-GROUPING_RULE = "same_location_within_15_min"
+GROUPING_RULE = "same_asset_or_system_within_15_min"
 SEVERITY_RANK = {"info": 0, "warning": 1, "critical": 2}
 TRANSITIONS = {"open": {"acknowledged", "resolved"}, "acknowledged": {"resolved"}, "resolved": set()}
 
@@ -30,20 +35,34 @@ def max_severity(*sevs):
     return max(sevs, key=lambda s: SEVERITY_RANK[s])
 
 
+def linked(x, y):
+    """Same asset, or same system type in the same location. x, y: dicts with asset_id, location_id, system_type."""
+    return x["asset_id"] == y["asset_id"] or (x["location_id"] == y["location_id"]
+                                              and x["system_type"] == y["system_type"])
+
+
 def group_alerts(alerts, gap_min=GROUP_GAP_MIN):
-    """Pure grouping (used by tests): alerts = dicts with location_id, first_ts, last_ts. Returns list of lists."""
-    groups = []
-    for a in sorted(alerts, key=lambda x: x["first_ts"]):
-        for g in groups:
-            if (g["location_id"] == a["location_id"]
-                    and within_gap(a["first_ts"], a["last_ts"], g["first_ts"], g["last_ts"], gap_min)):
-                g["items"].append(a)
-                g["first_ts"], g["last_ts"] = min(g["first_ts"], a["first_ts"]), max(g["last_ts"], a["last_ts"])
-                break
-        else:
-            groups.append({"location_id": a["location_id"], "first_ts": a["first_ts"], "last_ts": a["last_ts"],
-                           "items": [a]})
-    return [g["items"] for g in groups]
+    """Pure grouping (used by tests). alerts: dicts with asset_id, location_id, system_type, first_ts, last_ts.
+    Two alerts are joined when linked() and their time ranges are within gap_min; groups are the connected
+    components of that relation. Returns a list of lists."""
+    alerts = list(alerts)
+    parent = list(range(len(alerts)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i, x in enumerate(alerts):
+        for j in range(i):
+            y = alerts[j]
+            if linked(x, y) and within_gap(x["first_ts"], x["last_ts"], y["first_ts"], y["last_ts"], gap_min):
+                parent[find(i)] = find(j)
+    groups = {}
+    for i, x in enumerate(alerts):
+        groups.setdefault(find(i), []).append(x)
+    return sorted(groups.values(), key=lambda g: min(x["first_ts"] for x in g))
 
 
 def _incident_title(alert_title, zone, n):
@@ -51,26 +70,32 @@ def _incident_title(alert_title, zone, n):
 
 
 def assign_incidents(cur):
-    """Attach every alert without an incident to an open/acknowledged incident of the same location within the
-    gap, or open a new one. Idempotent. Returns {'created': n, 'attached': n}."""
-    cur.execute("""SELECT al.alert_id, al.severity, al.title, al.first_ts, al.last_ts, a.location_id, l.name AS zone
+    """Attach every alert without an incident to an open/acknowledged incident that holds a LINKED alert (same
+    asset, or same system type in the same location) within the gap, or open a new one. Idempotent.
+    Returns {'created': n, 'attached': n}."""
+    cur.execute("""SELECT al.alert_id, al.asset_id, al.severity, al.title, al.first_ts, al.last_ts,
+                          a.location_id, a.system_type_id, l.name AS zone
                    FROM alerts al JOIN assets a USING (asset_id) JOIN locations l USING (location_id)
                    WHERE al.incident_id IS NULL ORDER BY al.first_ts, al.alert_id""")
     pending = cur.fetchall()
     created = attached = 0
     for al in pending:
-        cur.execute("""SELECT incident_id, severity, first_ts, last_ts FROM incidents
-                       WHERE location_id=%s AND status <> 'resolved'
-                         AND GREATEST(%s - last_ts, first_ts - %s) <= make_interval(mins => %s)
-                       ORDER BY last_ts DESC LIMIT 1""",
-                    (al["location_id"], al["first_ts"], al["last_ts"], GROUP_GAP_MIN))
-        inc = cur.fetchone()
-        if inc:
+        cur.execute("""SELECT i.incident_id, i.severity FROM incidents i
+                       WHERE i.status <> 'resolved' AND EXISTS (
+                           SELECT 1 FROM alerts x JOIN assets ax USING (asset_id)
+                           WHERE x.incident_id = i.incident_id
+                             AND (x.asset_id = %s OR (ax.location_id = %s AND ax.system_type_id = %s))
+                             AND GREATEST(%s - x.last_ts, x.first_ts - %s) <= make_interval(mins => %s))
+                       ORDER BY i.last_ts DESC LIMIT 1""",
+                    (al["asset_id"], al["location_id"], al["system_type_id"], al["first_ts"], al["last_ts"],
+                     GROUP_GAP_MIN))
+        found = cur.fetchone()
+        if found:
             cur.execute("""UPDATE incidents SET severity=%s, first_ts=LEAST(first_ts,%s), last_ts=GREATEST(last_ts,%s)
                            WHERE incident_id=%s""",
-                        (max_severity(inc["severity"], al["severity"]), al["first_ts"], al["last_ts"],
-                         inc["incident_id"]))
-            iid = inc["incident_id"]
+                        (max_severity(found["severity"], al["severity"]), al["first_ts"], al["last_ts"],
+                         found["incident_id"]))
+            iid = found["incident_id"]
             attached += 1
         else:
             cur.execute("""INSERT INTO incidents (location_id, title, severity, first_ts, last_ts, grouping_rule)

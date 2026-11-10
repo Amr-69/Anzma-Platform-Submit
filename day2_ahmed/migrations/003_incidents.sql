@@ -1,6 +1,8 @@
--- 003_incidents.sql  (Day 2, Ahmed) - additive: nothing in 001/002 changes except one new nullable column.
--- An incident groups alerts raised in the same location within 15 minutes of each other.
--- Alerts stay the detections; the incident is the managed record with a lifecycle (open -> acknowledged -> resolved).
+-- 003_incidents.sql  (Day 2, Ahmed). Load order: 1) anzma_schema_and_seed.sql  2) this file. Idempotent.
+-- Adds ONLY: the incidents table, its indexes and the nullable alerts.incident_id. Nothing else is touched.
+-- An incident groups LINKED alerts (same asset, or same system type in the same location) within 15 minutes of
+-- each other. Alerts stay the detections; the incident is the managed record (open -> acknowledged -> resolved).
+-- If an earlier version of this file was applied to a database, rebuild that database (the rule name changed).
 BEGIN;
 CREATE TABLE IF NOT EXISTS incidents (
     incident_id     BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -8,7 +10,7 @@ CREATE TABLE IF NOT EXISTS incidents (
     title           TEXT NOT NULL,
     severity        TEXT NOT NULL CHECK (severity IN ('info','warning','critical')),
     status          TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','acknowledged','resolved')),
-    grouping_rule   TEXT NOT NULL DEFAULT 'same_location_within_15_min',
+    grouping_rule   TEXT NOT NULL DEFAULT 'same_asset_or_system_within_15_min',
     first_ts        TIMESTAMPTZ NOT NULL,
     last_ts         TIMESTAMPTZ NOT NULL,
     acknowledged_ts TIMESTAMPTZ,

@@ -1,7 +1,8 @@
 """
 recommendations.py  (Day 2 - Ahmed: evidence-supported corrective recommendations)
 
-Every recommendation comes from an approved playbook rule in alert_config.PLAYBOOKS and is offered only when
+Every recommendation comes from an APPROVED playbook action (status "approved"; draft actions are never returned)
+in alert_config.PLAYBOOKS and is offered only when
 the facts measured for the alert satisfy that rule's condition. The language model never creates or gates a
 recommendation: it may only phrase an explanation. Each recommendation carries the facts that justify it and
 the evidence refs of the alert, so it can be traced back to stored events.
@@ -38,6 +39,7 @@ def recommend(alert):
         recs.append({
             "recommendation_id": f"{alert.get('id', 'new')}:{a['id']}",
             "action_id": a["id"], "priority": a["priority"], "text": a["text"],
+            "status": a["status"], "approver": a["approver"],   # only approved playbook actions get here
             "basis": a["because"],                     # facts that satisfied the playbook condition
             "playbook": playbook, "rule_id": rule_id, "alert_id": alert.get("id"),
             "evidence_refs": refs,

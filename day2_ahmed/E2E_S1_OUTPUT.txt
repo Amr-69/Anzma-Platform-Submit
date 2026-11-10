@@ -1,0 +1,96 @@
+
+=== 0. Environment ========================================================
+  database: anzma_e2e   driver: psycopg2   run at: 2026-11-10T11:00:36+00:00
+
+=== 1. S1 fault rows in the database BEFORE detection (A4) ================
+  alerts=0  incidents=0
+  [PASS] no alerts and no incidents exist before detection (nothing pre-seeded)
+  [PASS] S1 asset HVAC-CRAC-01 (CRAC Unit 1) exists
+  asset: CRAC Unit 1 (asset_id=2)
+  event_records (unit-reported):
+    event_id=951    hvac_fault      critical  2026-11-09T14:00:00+00:00  {'code': 'HIGH_TEMP'}
+    event_id=952    hvac_recovered  info      2026-11-09T15:30:00+00:00  {}
+  [PASS] the unit logged hvac_fault and hvac_recovered
+  temperature rows during the fault window (7 rows, deg C):
+    telemetry_id=3419   2026-11-09T14:00:00+00:00  32.04
+    telemetry_id=3434   2026-11-09T14:15:00+00:00  31.98
+    telemetry_id=3449   2026-11-09T14:30:00+00:00  32.11
+    telemetry_id=3464   2026-11-09T14:45:00+00:00  32.14
+    telemetry_id=3479   2026-11-09T15:00:00+00:00  31.92
+    telemetry_id=3494   2026-11-09T15:15:00+00:00  32.07
+    telemetry_id=3509   2026-11-09T15:30:00+00:00  31.92
+  baseline before the fault: mean 24.13, max 25.74
+  [PASS] fault readings are far above the pre-fault baseline  (fault peak 32.14 vs baseline max 25.74)
+
+=== 2. Alert detection and incident grouping ==============================
+  as_of=2026-11-10T11:00:00+00:00  detected=10  new_alerts=10  incidents_created=8  alerts_attached=2
+  limitation: Data is current only up to 2026-11-10 11:00 UTC (the latest stored record); later events are not reflected.
+  [PASS] detect() reports an explicit as_of and a freshness limitation
+
+=== 3. S1 alert and incident (A5) =========================================
+  alert_id=7 HVAC_HIGH_TEMP     critical open  incident_id=6
+      CRAC Unit 1 (Cold Aisle A): temperature peaked at 32.1 °C, above the 29 °C warning threshold, across 7 reading(s) over 90 min.
+  alert_id=8 HVAC_TEMP_ANOMALY  warning  open  incident_id=6
+      CRAC Unit 1 (Cold Aisle A): high deviation, peak 32.1 °C vs a normal 24.8 °C for working hours (robust z = 8.1) over 7 readings.
+  [PASS] S1 raised HVAC_HIGH_TEMP on the CRAC  (HVAC_HIGH_TEMP, HVAC_TEMP_ANOMALY)
+  [PASS] all S1 alerts belong to ONE incident
+  incident 6: 'HVAC temperature above threshold - CRAC Unit 1 at Cold Aisle A (+1 related alert)'  severity=critical  status=open  rank=2  alerts=[7, 8]  rule=same_asset_or_system_within_15_min
+  other alerts in the seed (separate scenarios, NOT part of S1):
+    ACS-RDR-02    ACC_DOOR_FORCED      critical
+    CCTV-CAM-02   CCTV_OFFLINE_LONG    warning
+    ACS-RDR-01    ACC_DOOR_HELD_OPEN   warning
+    NET-SW-01     NET_LINK_DOWN        critical
+    NET-SW-01     NET_PACKET_LOSS      critical
+    ACS-RDR-02    ACC_DENIAL_SPIKE     warning
+    FIRE-SMK-01   FIRE_SMOKE           critical
+    CCTV-CAM-02   CCTV_OFFLINE_LONG    warning
+  [PASS] no active (open) fire alert exists; no fire alert on the Fire Panel
+  [PASS] the S1 incident contains alerts of the CRAC only
+
+=== 4. Incident evidence verified against the fact tables (A6) ============
+  alert 7 HVAC_HIGH_TEMP: 7 evidence rows
+    E1   telemetry record_id=3419   2026-11-09T14:00:00+00:00  value=32.04  verified=True
+    E2   telemetry record_id=3434   2026-11-09T14:15:00+00:00  value=31.98  verified=True
+    E3   telemetry record_id=3449   2026-11-09T14:30:00+00:00  value=32.11  verified=True
+    E4   telemetry record_id=3464   2026-11-09T14:45:00+00:00  value=32.14  verified=True
+    E5   telemetry record_id=3479   2026-11-09T15:00:00+00:00  value=31.92  verified=True
+    E6   telemetry record_id=3494   2026-11-09T15:15:00+00:00  value=32.07  verified=True
+    E7   telemetry record_id=3509   2026-11-09T15:30:00+00:00  value=31.92  verified=True
+  alert 8 HVAC_TEMP_ANOMALY: 7 evidence rows
+    E1   telemetry record_id=3419   2026-11-09T14:00:00+00:00  value=32.04  verified=True
+    E2   telemetry record_id=3434   2026-11-09T14:15:00+00:00  value=31.98  verified=True
+    E3   telemetry record_id=3449   2026-11-09T14:30:00+00:00  value=32.11  verified=True
+    E4   telemetry record_id=3464   2026-11-09T14:45:00+00:00  value=32.14  verified=True
+    E5   telemetry record_id=3479   2026-11-09T15:00:00+00:00  value=31.92  verified=True
+    E6   telemetry record_id=3494   2026-11-09T15:15:00+00:00  value=32.07  verified=True
+    E7   telemetry record_id=3509   2026-11-09T15:30:00+00:00  value=31.92  verified=True
+  verified 14 / 14   unverified: []
+  [PASS] every evidence row of the incident is verified against event_records / telemetry_records  (14/14)
+
+=== 5. Explanation, grounding check, recommendation (fallback path) =======
+  ai_source=fallback  model_used=None  data_sufficiency=complete
+  validation: status=grounding_supported  scope=grounding  attempts=0
+  checks_run: evidence_row_verified, citation_exists, number_in_evidence, time_in_evidence, date_in_evidence, cause_supported_by_facts, action_in_playbook, evidence_ref_exists
+  evidence_verification: 7 verified / 0 unverified
+  answer: CRAC Unit 1 (Cold Aisle A): temperature peaked at 32.1 °C, above the 29 °C warning threshold, across 7 reading(s) over 90 min. Evidence: [E1], [E7].
+  limitation: Data is current only up to 2026-11-10 11:00 UTC (the latest stored record); later events are not reflected.
+  recommendations (approved playbook actions only):
+    P1 HVAC_VERIFY     [approved, Ahmed (Day 2 playbook owner)]  Confirm the reading on site and check the unit's local controller for active faults.
+         because: standard response for this rule   evidence: E1, E2, E3, E4...
+    P3 HVAC_COOLING    [approved, Ahmed (Day 2 playbook owner)]  Check compressor operation, refrigerant pressure and the setpoint.
+         because: sustained = True   evidence: E1, E2, E3, E4...
+    P9 HVAC_TICKET     [approved, Ahmed (Day 2 playbook owner)]  Open a maintenance ticket if readings do not return to normal after these checks.
+         because: standard response for this rule   evidence: E1, E2, E3, E4...
+  [PASS] the answer is grounding_supported (grounding only; not a semantic check)
+  [PASS] recommendations exist, come from the approved playbook and cite the evidence
+  (fallback path only; run with --llm while Ollama is up for A7, and stop Ollama and run --llm for A8)
+  [PASS] the explanation is stored on the alert  (explanation_source=fallback)
+
+=== 6. Re-running detection creates no duplicates (A10) ===================
+  before: alerts=10 incidents=8   after: alerts=10 incidents=8   new_alerts=0
+  [PASS] second detect() adds nothing
+
+=== Result ================================================================
+  commit: not a git checkout (run: git rev-parse HEAD)
+  date:   2026-11-10 11:00:36 UTC
+  checks: 14/14 passed  ->  PASS

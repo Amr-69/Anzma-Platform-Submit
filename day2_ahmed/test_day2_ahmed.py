@@ -183,10 +183,10 @@ def _():
 
 
 # ------------------------------------------------------------------ 4. validation layer
-@test("validation: deterministic explanation is validated only because the check really ran")
+@test("validation: deterministic explanation is grounding_supported only because the checks really ran")
 def _():
     out = val.explain_alert(HIGH, ASSET, use_llm=False)
-    assert out["validation"]["status"] == "validated" and out["validation"]["checks_run"]
+    assert out["validation"]["status"] == "grounding_supported" and out["validation"]["checks_run"]
     assert out["validation"]["errors"] == []
     assert out["data_sufficiency"] == "complete" and out["ai_source"] == "fallback" and out["model_used"] is None
     assert out["references"] == {"assets": [1], "incidents": []} and out["recommendations"]
@@ -218,7 +218,7 @@ def _():
     assert any("FILTER_BLOCKAGE" in x for x in val.validate_explanation(HIGH, ASSET, exp)["errors"])
 
 
-@test("validation: no stored evidence -> insufficient, never validated, with a limitation")
+@test("validation: no stored evidence -> insufficient, never grounding_supported, with a limitation")
 def _():
     empty = {"id": 7, "rule_id": "HVAC_HIGH_TEMP", "severity": "WARNING", "summary": "x",
              "evidence": {"facts": {}, "events": [], "thresholds": {}, "event_count": 0}}
@@ -229,13 +229,13 @@ def _():
     assert out["recommendations"] == [] and out["evidence"] == [], "nothing may be recommended without evidence"
 
 
-@test("validation: validated is refused when errors are present, and 'partial' is used when no cause is supported")
+@test("validation: grounding_supported is refused when errors are present, and 'partial' is used when no cause is supported")
 def _():
     try:
         val.standard_response(answer="a", evidence=[], references={}, model_used=None, tool_used="t",
                               ai_source="llm", data_sufficiency="complete", limitations=[],
-                              validation={"status": "validated", "checks_run": ["x"], "errors": ["boom"]})
-        raise AssertionError("accepted validated with errors")
+                              validation={"status": "grounding_supported", "checks_run": ["x"], "errors": ["boom"]})
+        raise AssertionError("accepted grounding_supported with errors")
     except ValueError:
         pass
     denial = {"id": 9, "rule_id": "ACC_DENIAL_SPIKE", "severity": "WARNING", "detection_method": "THRESHOLD", "summary": "s", "asset_id": 2,
@@ -248,15 +248,15 @@ def _():
     assert out["data_sufficiency"] == "partial", out["data_sufficiency"]
 
 
-@test("validation: standard_response refuses 'validated' without recorded checks")
+@test("validation: standard_response refuses 'grounding_supported' without recorded checks")
 def _():
     try:
         val.standard_response(answer="a", evidence=[], references={}, model_used=None, tool_used="t",
-                              ai_source="rules", data_sufficiency="complete", validation={"status": "validated"},
+                              ai_source="rules", data_sufficiency="complete", validation={"status": "grounding_supported"},
                               limitations=[])
     except ValueError:
         return
-    raise AssertionError("validated label was accepted without checks")
+    raise AssertionError("grounding_supported label was accepted without checks")
 
 
 @test("validation: truncated evidence is disclosed as a limitation")
@@ -267,12 +267,12 @@ def _():
 
 
 # ------------------------------------------------------------------ 5. safe fallback when the model is down
-@test("fallback: Ollama unreachable -> deterministic validated answer with the limitation stated")
+@test("fallback: Ollama unreachable -> deterministic grounding_supported answer with the limitation stated")
 def _():
     ai_explainer.OLLAMA_HOST, ai_explainer.OLLAMA_TIMEOUT = "http://127.0.0.1:1", 2     # nothing listens here
     out = val.explain_alert(HIGH, ASSET, use_llm=True)
     assert out["ai_source"] == "fallback" and out["model_used"] is None, out["ai_source"]
-    assert out["validation"]["status"] == "validated"
+    assert out["validation"]["status"] == "grounding_supported"
     assert any("language model was unavailable" in x for x in out["limitations"]), out["limitations"]
     assert out["recommendations"], "recommendations must not depend on the model"
 
@@ -282,6 +282,52 @@ def _():
 def _():
     alerts = run_rules(make_events(fault=False, gap=True))
     assert alerts == [], [a["rule_id"] for a in alerts]
+
+
+# ------------------------------------------------------------------ Day 2 fixes: status wording, playbook approval
+@test("D4: the success status is 'grounding_supported' with scope 'grounding'; 'validated' no longer exists")
+def _():
+    out = val.explain_alert(HIGH, ASSET, use_llm=False)
+    assert out["validation"]["status"] == "grounding_supported" and out["validation"]["scope"] == "grounding"
+    assert not hasattr(val, "VALIDATED") and out["validation"]["status"] != "validated"
+    try:
+        val.standard_response(answer="a", evidence=[], references={}, model_used=None, tool_used="t", ai_source="rules",
+                              data_sufficiency="complete", limitations=[], validation={"status": "grounding_supported"})
+        raise AssertionError("accepted grounding_supported without checks")
+    except ValueError:
+        pass
+
+
+@test("playbook: every action carries a status and an approver")
+def _():
+    import alert_config as cfg
+    acts = [a for b in cfg.PLAYBOOKS.values() for a in b["actions"]]
+    assert acts and all(a["status"] in ("approved", "draft") and a["approver"] for a in acts)
+
+
+@test("playbook: a DRAFT action is never recommended, never eligible and is rejected by the validator")
+def _():
+    import alert_config as cfg
+    action = next(a for a in cfg.PLAYBOOKS["HVAC_TEMP"]["actions"] if a["id"] == "HVAC_COOLING")
+    assert "HVAC_COOLING" in {x["action_id"] for x in recs.recommend(HIGH)["recommendations"]}
+    action["status"] = cfg.DRAFT
+    try:
+        assert "HVAC_COOLING" not in {x["action_id"] for x in recs.recommend(HIGH)["recommendations"]}
+        assert not recs.is_approved(HIGH, "HVAC_COOLING")
+        assert "HVAC_COOLING" not in {a["id"] for a in ai_explainer.eligible("HVAC_HIGH_TEMP", HIGH["evidence"]["facts"])[1]}
+        bad = {"summary": "Peak reached [E1].", "probable_causes": [], "recommended_actions": [{"id": "HVAC_COOLING"}],
+               "evidence_refs": ["E1"]}
+        v = val.validate_explanation(HIGH, ASSET, bad)
+        assert v["status"] == "failed" and any("HVAC_COOLING" in e for e in v["errors"]), v
+    finally:
+        action["status"] = cfg.APPROVED
+    assert "HVAC_COOLING" in {x["action_id"] for x in recs.recommend(HIGH)["recommendations"]}
+
+
+@test("freshness: as_of adds a limitation to an explanation")
+def _():
+    out = val.explain_alert(HIGH, ASSET, use_llm=False, as_of=START)
+    assert any("current only up to 2026-11-05 12:00" in x for x in out["limitations"]), out["limitations"]
 
 
 if __name__ == "__main__":

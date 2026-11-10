@@ -1,5 +1,6 @@
 """
-db_adapter.py - the ONLY place where the Day-2 engine touches the unified schema (migrations/001).
+db_adapter.py - the ONLY place where the Day-2 engine touches the database. Schema: anzma_schema_and_seed.sql
+(authoritative) + migrations/003_incidents.sql, loaded in that order.
 
   load_context()   telemetry_records + event_records -> the event dicts the alert rules read
   store_alerts()   engine alerts -> alerts table (idempotent: an alert is identified by rule, asset, first_ts)
@@ -9,9 +10,61 @@ Naming translation (DATA_MODEL.md "Names"): NETWORKING->NETWORK, ACCESS_CONTROL-
 database -> UPPERCASE in the engine/API, locations.name -> zone. When Amr's db_map.py is merged, replace the maps
 below with imports from it; nothing else in the engine changes.
 """
+import functools
+import os
 from datetime import timezone
 
-from psycopg2.extras import Json
+# ---- driver: psycopg2 or psycopg (v3), whichever is installed (ANZMA_DRIVER=psycopg2|psycopg forces one) ----------
+_DRIVERS = {}
+for _name in ("psycopg2", "psycopg"):
+    try:
+        _DRIVERS[_name] = __import__(_name)
+    except ImportError:
+        pass
+if not _DRIVERS:
+    raise ImportError("install psycopg2-binary or psycopg[binary]")
+_FORCED = os.getenv("ANZMA_DRIVER", "").lower()
+DRIVER = _FORCED if _FORCED in _DRIVERS else next(iter(_DRIVERS))   # psycopg2 first, then psycopg
+
+# every "database is not reachable / connection is gone" error of every installed driver
+OPERATIONAL_ERRORS = tuple(c for m in _DRIVERS.values() for c in (m.OperationalError, m.InterfaceError))
+
+
+class DatabaseUnavailable(RuntimeError):
+    """The database cannot be reached or the connection was lost. Callers map it to HTTP 503 DATA_UNAVAILABLE."""
+
+
+def connect(dsn="", connect_timeout=5, **kw):
+    """Connection with dict rows on the selected driver. Raises DatabaseUnavailable if the server is unreachable."""
+    try:
+        if DRIVER == "psycopg2":
+            import psycopg2.extras
+            return _DRIVERS["psycopg2"].connect(dsn, cursor_factory=psycopg2.extras.RealDictCursor,
+                                                connect_timeout=connect_timeout, **kw)
+        from psycopg.rows import dict_row
+        return _DRIVERS["psycopg"].connect(dsn, row_factory=dict_row, connect_timeout=connect_timeout, **kw)
+    except OPERATIONAL_ERRORS as exc:
+        raise DatabaseUnavailable(f"database unavailable: {str(exc).strip()[:200]}") from exc
+
+
+def guard(fn):
+    """Turn a lost/unreachable database inside fn into DatabaseUnavailable (a controlled error, not a crash)."""
+    @functools.wraps(fn)
+    def wrapper(*a, **kw):
+        try:
+            return fn(*a, **kw)
+        except OPERATIONAL_ERRORS as exc:
+            raise DatabaseUnavailable(f"database unavailable: {str(exc).strip()[:200]}") from exc
+    return wrapper
+
+
+def Json(cur, obj):
+    """JSONB parameter for the driver that owns this cursor."""
+    if type(cur).__module__.startswith("psycopg2"):
+        from psycopg2.extras import Json as J
+        return J(obj)
+    from psycopg.types.json import Jsonb
+    return Jsonb(obj)
 
 SYSTEM_TO_API = {"HVAC": "HVAC", "NETWORKING": "NETWORK", "ACCESS_CONTROL": "ACCESS",
                  "CCTV": "CCTV", "FIRE_ALARM": "FIRE_ALARM"}
@@ -112,7 +165,7 @@ def store_alerts(cur, alerts):
                        WHERE NOT EXISTS (SELECT 1 FROM alerts WHERE rule_id=%s AND asset_id=%s AND first_ts=%s)
                        RETURNING alert_id""",
                     (a["rule_id"], enum_to_db(a["detection_method"]), enum_to_db(a["severity"]), a["asset_id"],
-                     a["title"], a["summary"], a["first_ts"], a["last_ts"], a["detected_ts"], Json(a["evidence"]),
+                     a["title"], a["summary"], a["first_ts"], a["last_ts"], a["detected_ts"], Json(cur, a["evidence"]),
                      a["rule_id"], a["asset_id"], a["first_ts"]))
         row = cur.fetchone()
         if row:
@@ -150,5 +203,5 @@ def save_explanation(cur, alert_id, response):
     if source is None:
         return False
     cur.execute("""UPDATE alerts SET explanation=%s, explanation_source=%s, explained_at=now()
-                   WHERE alert_id=%s""", (Json(response), source, alert_id))
+                   WHERE alert_id=%s""", (Json(cur, response), source, alert_id))
     return True
