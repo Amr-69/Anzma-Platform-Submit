@@ -1,0 +1,1473 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Building Operations Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="/static/chat-widget.js" defer></script>
+  <style>
+    .inc { margin: 0 0 22px; }
+    .inc-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .inc-head h3 { margin: 0; }
+    .inc-llm { font-size: 13px; color: var(--muted, #667085); display: flex; gap: 6px; align-items: center; }
+    .inc-hint { margin: 6px 0 10px; font-size: 13px; color: var(--muted, #667085); }
+    #incList { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+    #incList li { border: 1px solid var(--line, #e3e6ea); border-left: 4px solid #98a2b3; border-radius: 8px;
+      padding: 10px 12px; cursor: pointer; background: var(--surface, #fff); }
+    #incList li.CRITICAL { border-left-color: var(--crit, #b3261e); }
+    #incList li.WARNING { border-left-color: var(--warn, #9a6410); }
+    #incList li[aria-selected="true"] { outline: 2px solid #2a7f8e; }
+    #incList .t { font-weight: 600; }
+    #incList .m { font-size: 12px; color: var(--muted, #667085); margin-top: 3px; }
+    .tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px;
+      background: #eef0f3; color: #344054; margin-right: 6px; }
+    .tag.CRITICAL { background: #fde8e7; color: #b3261e; } .tag.WARNING { background: #fdf0d9; color: #9a6410; }
+    .tag.ok { background: #e3f4ea; color: #1e6b3f; } .tag.bad { background: #fde8e7; color: #b3261e; }
+    .inc-detail { margin-top: 14px; border-top: 1px solid var(--line, #e3e6ea); padding-top: 14px; }
+    .inc-detail h4 { margin: 14px 0 6px; font-size: 14px; }
+    .inc-detail table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .inc-detail th, .inc-detail td { text-align: left; padding: 3px 6px; border-bottom: 1px solid #eef0f3; }
+    .inc-detail .acts button, .inc-detail .alert-row button, #incRun { margin-right: 6px; }
+    .inc-detail .answer { background: #f7f8fa; border-radius: 8px; padding: 10px 12px; margin: 8px 0; white-space: pre-wrap; }
+    .inc-detail ul { margin: 4px 0 0 18px; padding: 0; }
+    .inc-detail .alert-row { border: 1px solid #eef0f3; border-radius: 8px; padding: 8px 10px; margin: 8px 0; }
+  </style>
+</head>
+
+<body>
+  <header>
+    <div>
+      <h1>Building operations dashboard</h1>
+      <p id="ref">Loading data window…</p>
+    </div>
+    <div class="controls">
+      <div class="seg" id="sysFilter" role="group" aria-label="System filter"></div>
+      <div class="seg" id="hoursFilter" role="group" aria-label="Time window"></div>
+      <button id="refresh" type="button">Refresh</button>
+    </div>
+  </header>
+
+  <!-- مكان شريط التنبيهات المنبثق (Toasts) ومركز التنبيهات (Alert Center) -->
+  <div id="toasts" aria-live="assertive"></div>
+
+  <main>
+    <div id="msg" role="alert"></div>
+
+    <!-- مركز التنبيهات (Alert Center Widget) الجديد -->
+    <section id="alertCenter" class="panel ac">
+      <div class="ac-head">
+        <h3>Alert center <span id="acCount" class="ac-count">0</span></h3>
+        <div class="ac-tools">
+          <select id="acSeverity" aria-label="Severity filter">
+            <option value="">All severities</option>
+            <option value="CRITICAL">Critical</option>
+            <option value="WARNING">Warning</option>
+            <option value="INFO">Info</option>
+          </select>
+          <select id="acSystem" aria-label="System filter">
+            <option value="">All systems</option>
+            <option value="HVAC">HVAC</option>
+            <option value="NETWORK">Network</option>
+            <option value="ACCESS">Access control</option>
+            <option value="CCTV">CCTV</option>
+            <option value="FIRE_ALARM">Fire alarm</option>
+          </select>
+          <button id="acSound" type="button" aria-pressed="true" title="Toggle sound">🔔 Sound on</button>
+          <button id="acClear" type="button">Clear</button>
+          <span id="acConn" class="ac-conn off">offline</span>
+        </div>
+      </div>
+      <ul id="acList"></ul>
+      <p id="acEmpty" class="ac-empty">No alerts match the filters.</p>
+    </section>
+
+    <section id="incidents" class="panel inc">
+      <div class="inc-head">
+        <h3>Incidents <span id="incCount" class="ac-count">0</span></h3>
+        <label class="inc-llm" title="If the model is not available the answer falls back to a deterministic one built from the stored evidence">
+          <input type="checkbox" id="incLlm"> Use local AI model (Ollama)
+        </label>
+      </div>
+      <p class="inc-hint">Related alerts are grouped into incidents. Select one to see its evidence, the explanation and the recommended actions.</p>
+      <ul id="incList"></ul>
+      <p id="incEmpty" class="ac-empty">No incidents yet. Detection runs automatically; you can also run it now.
+        <button id="incRun" type="button">Run detection</button></p>
+      <div id="incDetail" class="inc-detail" hidden></div>
+    </section>
+
+    <h2>System status</h2>
+    <div id="status"></div>
+    <h2>Key indicators</h2>
+    <div id="kpis"></div>
+    <h2>Trends</h2>
+    <div id="charts">
+      <section class="panel" id="p-events">
+        <h3>Events by system</h3>
+        <div><canvas id="c-events"></canvas></div>
+      </section>
+      <section class="panel" id="p-hvac">
+        <h3>HVAC average temperature (°C)</h3>
+        <div><canvas id="c-hvac"></canvas></div>
+      </section>
+      <section class="panel" id="p-net">
+        <h3>Network bandwidth utilisation (%)</h3>
+        <div><canvas id="c-net"></canvas></div>
+      </section>
+      <section class="panel" id="p-acc">
+        <h3>Denied access attempts</h3>
+        <div><canvas id="c-acc"></canvas></div>
+      </section>
+    </div>
+    <h2>Equipment health</h2>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Asset</th>
+            <th>System</th>
+            <th>Location</th>
+            <th>Status</th>
+            <th>Reason</th>
+            <th class="n">Events</th>
+            <th class="n">Faults</th>
+            <th class="n">Warnings</th>
+            <th class="n">Critical</th>
+            <th>Last seen</th>
+          </tr>
+        </thead>
+        <tbody id="health"></tbody>
+      </table>
+    </div>
+  </main>
+
+  <script src="/static/chart.umd.js"></script>
+  <script>
+    /* =========================================================
+       1. Dashboard Configuration
+    ========================================================= */
+
+    const SYSTEMS = ["HVAC", "NETWORK", "ACCESS", "CCTV", "FIRE_ALARM"];
+
+    const LABEL = {
+      HVAC: "HVAC",
+      NETWORK: "Network",
+      ACCESS: "Access control",
+      CCTV: "CCTV",
+      FIRE_ALARM: "Fire alarm"
+    };
+
+    const COLOR = {
+      HVAC: "#2a7f8e",
+      NETWORK: "#4e5ba6",
+      ACCESS: "#c27a2c",
+      CCTV: "#7a5c99",
+      FIRE_ALARM: "#b5473a"
+    };
+
+    const state = {
+      system: "",
+      hours: 24
+    };
+
+    const charts = {};
+
+    const $ = id => document.getElementById(id);
+
+    const esc = value =>
+      String(value ?? "").replace(/[&<>"]/g, char => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;"
+      }[char]));
+
+    const fmtTime = (iso, long = false) => {
+      const date = new Date(iso);
+
+      if (Number.isNaN(date.getTime())) return "Invalid date";
+
+      return date.toLocaleString([], long
+        ? {
+          day: "2-digit",
+          month: "short",
+          hour: "2-digit",
+          minute: "2-digit"
+        }
+        : {
+          hour: "2-digit",
+          minute: "2-digit"
+        }
+      );
+    };
+
+
+    /* =========================================================
+       2. Dashboard Filters
+    ========================================================= */
+
+    function seg(el, items, key, onPick) {
+      el.innerHTML = "";
+
+      items.forEach(([value, text]) => {
+        const button = document.createElement("button");
+
+        button.type = "button";
+        button.textContent = text;
+
+        button.setAttribute(
+          "aria-pressed",
+          String(state[key] === value)
+        );
+
+        button.onclick = () => {
+          if (state[key] === value) return;
+
+          state[key] = value;
+          onPick();
+        };
+
+        el.appendChild(button);
+      });
+    }
+
+    function drawControls() {
+      seg(
+        $("sysFilter"),
+        [
+          ["", "All systems"],
+          ...SYSTEMS.map(system => [system, LABEL[system]])
+        ],
+        "system",
+        load
+      );
+
+      seg(
+        $("hoursFilter"),
+        [
+          [6, "6 h"],
+          [12, "12 h"],
+          [24, "24 h"],
+          [48, "48 h"]
+        ],
+        "hours",
+        load
+      );
+    }
+
+
+    /* =========================================================
+       3. API Requests
+    ========================================================= */
+
+    async function api(path) {
+      const query = new URLSearchParams({
+        hours: state.hours
+      });
+
+      if (state.system) {
+        query.set("system_type", state.system);
+      }
+
+      const response = await fetch(
+        `/dashboard/${path}?${query}`
+      );
+
+      if (!response.ok) {
+        throw new Error(`${path}: HTTP ${response.status}`);
+      }
+
+      return response.json();
+    }
+
+
+    /* =========================================================
+       4. System Status
+    ========================================================= */
+
+    function drawStatus(systems) {
+      const container = $("status");
+
+      container.innerHTML = "";
+
+      systems.forEach(system => {
+        const button = document.createElement("button");
+
+        const status = system.status || "UNKNOWN";
+
+        button.className = `sys ${esc(status)}`;
+
+        button.setAttribute(
+          "aria-pressed",
+          String(state.system === system.type)
+        );
+
+        button.title = "Show only this system";
+
+        const statusLabel =
+          status === "OK"
+            ? "Operational"
+            : status === "UNKNOWN"
+              ? "No data"
+              : status.charAt(0) + status.slice(1).toLowerCase();
+
+        button.innerHTML = `
+        <b>${esc(LABEL[system.type] || system.type)}</b>
+
+        <div class="st ${esc(status)}">
+          ${esc(statusLabel)}
+        </div>
+
+        <small>
+          ${esc(system.assets)} assets:
+          ${esc(system.ok)} ok,
+          ${esc(system.warning)} warning,
+          ${esc(system.critical)} critical${system.no_data ? ", " + esc(system.no_data) + " no data" : ""}
+        </small>
+      `;
+
+        button.onclick = () => {
+          state.system =
+            state.system === system.type
+              ? ""
+              : system.type;
+
+          load();
+        };
+
+        container.appendChild(button);
+      });
+    }
+
+
+    /* =========================================================
+       5. KPI Cards
+    ========================================================= */
+
+    function drawKpis(kpis) {
+      $("kpis").innerHTML = kpis.map(kpi => `
+      <div class="kpi" title="${esc(kpi.definition)}">
+
+        <span>${esc(kpi.label)}</span>
+
+        <strong>
+          ${kpi.value === null || kpi.value === undefined
+          ? "n/a"
+          : esc(
+            typeof kpi.value === "number"
+              ? kpi.value.toLocaleString()
+              : kpi.value
+          )
+        }
+
+          ${kpi.value !== null &&
+          kpi.value !== undefined &&
+          kpi.unit
+          ? `<i>${esc(kpi.unit)}</i>`
+          : ""
+        }
+        </strong>
+
+        <small>${esc(kpi.sub || "\u00a0")}</small>
+
+      </div>
+    `).join("");
+    }
+
+
+    /* =========================================================
+       6. Chart Configuration
+    ========================================================= */
+
+    function chart(id, type, labels, datasets, opts = {}) {
+      const canvas = $(id);
+
+      if (!canvas) {
+        console.warn(`Chart element not found: ${id}`);
+        return;
+      }
+
+      if (charts[id]) {
+        charts[id].destroy();
+      }
+
+      charts[id] = new Chart(canvas, {
+        type,
+
+        data: {
+          labels,
+          datasets
+        },
+
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          spanGaps: true,
+
+          interaction: {
+            mode: "index",
+            intersect: false
+          },
+
+          plugins: {
+            legend: {
+              display: datasets.length > 1,
+              position: "bottom",
+
+              labels: {
+                boxWidth: 10
+              }
+            }
+          },
+
+          scales: {
+            x: {
+              stacked: !!opts.stacked,
+
+              ticks: {
+                maxTicksLimit: 10,
+                maxRotation: 0
+              }
+            },
+
+            y: {
+              stacked: !!opts.stacked,
+              beginAtZero: opts.zero !== false
+            }
+          },
+
+          elements: {
+            point: {
+              radius: 0
+            },
+
+            line: {
+              borderWidth: 2
+            }
+          }
+        }
+      });
+    }
+
+
+    /* =========================================================
+       7. Dashboard Trends
+    ========================================================= */
+
+    function drawTrends(trends) {
+      const long = state.hours > 24;
+
+      const labels = trends.buckets.map(bucket =>
+        fmtTime(bucket, long)
+      );
+
+      const systems = Object.keys(
+        trends.events_by_system || {}
+      );
+
+      // Events by system
+      chart(
+        "c-events",
+        "bar",
+        labels,
+
+        systems.map(system => ({
+          label: LABEL[system] || system,
+
+          data: trends.events_by_system[system],
+
+          backgroundColor: COLOR[system] || "#777777"
+        })),
+
+        {
+          stacked: true
+        }
+      );
+
+
+      // HVAC temperature
+      chart(
+        "c-hvac",
+        "line",
+        labels,
+
+        [{
+          label: "Avg temperature",
+          data: trends.hvac_avg_temp,
+          borderColor: COLOR.HVAC
+        }],
+
+        {
+          zero: false
+        }
+      );
+
+
+      // Network bandwidth
+      chart(
+        "c-net",
+        "line",
+        labels,
+
+        [
+          {
+            label: "Average",
+            data: trends.bandwidth_avg,
+            borderColor: COLOR.NETWORK
+          },
+
+          {
+            label: "Peak",
+            data: trends.bandwidth_peak,
+            borderColor: COLOR.NETWORK,
+            borderDash: [5, 4]
+          }
+        ]
+      );
+
+
+      // Access control. "granted" is not stored in this dataset (null): only denied attempts are drawn.
+      const accessSets = [];
+      if (Array.isArray(trends.access_granted)) {
+        accessSets.push({
+          label: "Granted",
+          data: trends.access_granted,
+          backgroundColor: "#2e7d4f"
+        });
+      }
+      accessSets.push({
+        label: "Denied",
+        data: trends.access_denied,
+        backgroundColor: "#b3261e"
+      });
+      chart("c-acc", "bar", labels, accessSets, { stacked: true });
+
+      // Show charts based on selected system
+      const show = (id, visible) => {
+        const element = $(id);
+
+        if (element) {
+          element.classList.toggle("hidden", !visible);
+        }
+      };
+
+      show(
+        "p-hvac",
+        !state.system || state.system === "HVAC"
+      );
+
+      show(
+        "p-net",
+        !state.system || state.system === "NETWORK"
+      );
+
+      show(
+        "p-acc",
+        !state.system || state.system === "ACCESS"
+      );
+    }
+
+
+    /* =========================================================
+       8. Equipment Health Table
+    ========================================================= */
+
+    function drawHealth(health) {
+      const referenceTime = new Date(health.window.to);
+
+      $("health").innerHTML = health.items.map(asset => {
+
+        const lastSeen = asset.last_seen
+          ? new Date(asset.last_seen)
+          : null;
+
+        const mins = lastSeen &&
+          !Number.isNaN(lastSeen.getTime())
+          ? Math.round(
+            (referenceTime - lastSeen) / 60000
+          )
+          : null;
+
+        const seen =
+          mins === null
+            ? "never"
+            : mins < 1
+              ? "at reference time"
+              : mins < 120
+                ? `${mins} min before`
+                : `${(mins / 60).toFixed(1)} h before`;
+
+        return `
+        <tr>
+
+          <td>${esc(asset.name)}</td>
+
+          <td>
+            ${esc(LABEL[asset.system_type] || asset.system_type)}
+          </td>
+
+          <td>
+            ${esc(asset.building)},
+            floor ${esc(asset.floor)},
+            ${esc(asset.zone)}
+          </td>
+
+          <td>
+            <span class="pill ${esc(asset.status)}">
+              ${esc(asset.status)}
+            </span>
+          </td>
+
+          <td>${esc(asset.reason)}</td>
+
+          <td class="n">${esc(asset.events)}</td>
+
+          <td class="n">${esc(asset.faults)}</td>
+
+          <td class="n">${esc(asset.warnings)}</td>
+
+          <td class="n">${esc(asset.criticals)}</td>
+
+          <td>${esc(seen)}</td>
+
+        </tr>
+      `;
+
+      }).join("") || `
+      <tr>
+        <td colspan="10">
+          No assets match this filter.
+        </td>
+      </tr>
+    `;
+    }
+
+
+    /* =========================================================
+       9. Load Dashboard
+    ========================================================= */
+
+    let dashboardRequestId = 0;
+
+    async function load() {
+      const requestId = ++dashboardRequestId;
+
+      drawControls();
+
+      $("msg").style.display = "none";
+
+      try {
+
+        const [summary, trends, health] = await Promise.all([
+          api("overview"),
+          api("trends"),
+          api("equipment-health")
+        ]);
+
+        // Ignore outdated responses
+        if (requestId !== dashboardRequestId) {
+          return;
+        }
+
+        $("ref").textContent =
+          `Data window: ${fmtTime(summary.window.from, true)} to ${fmtTime(summary.window.to, true)} (the latest event in the database is treated as "now")`;
+
+        drawStatus(summary.systems);
+
+        drawKpis(summary.kpis);
+
+        drawTrends(trends);
+
+        drawHealth(health);
+
+      } catch (error) {
+
+        if (requestId !== dashboardRequestId) {
+          return;
+        }
+
+        console.error("Dashboard loading error:", error);
+
+        $("msg").textContent =
+          `Could not load dashboard data (${error.message}). Check that the API and the database are running and that the database contains data.`;
+
+        $("msg").style.display = "block";
+      }
+    }
+
+
+    /* =========================================================
+       10. Alert Center Configuration
+    ========================================================= */
+
+    const AC = {
+      alerts: [],
+      max: 200,
+
+      filters: {
+        severity: "",
+        system: ""
+      },
+
+      sound: true,
+
+      seen: new Set()
+    };
+
+
+    /* =========================================================
+       11. Alert Sound (Web Audio API)
+    ========================================================= */
+
+    let audioCtx = null;
+
+    const TONES = {
+      CRITICAL: [880, 180, 3],
+      WARNING: [660, 150, 2],
+      INFO: [520, 120, 1]
+    };
+
+
+    function unlockAudio() {
+      const AudioContextClass =
+        window.AudioContext || window.webkitAudioContext;
+
+      if (!AudioContextClass) {
+        return;
+      }
+
+      try {
+        if (!audioCtx) {
+          audioCtx = new AudioContextClass();
+        }
+
+        if (audioCtx.state === "suspended") {
+          audioCtx.resume().catch(error => {
+            console.warn("Audio resume failed:", error);
+          });
+        }
+
+      } catch (error) {
+        console.warn("Audio initialization failed:", error);
+      }
+    }
+
+
+    // Unlock audio after user interaction
+    ["click", "keydown", "touchstart"].forEach(event => {
+      document.addEventListener(
+        event,
+        unlockAudio,
+        {
+          once: false,
+          passive: true
+        }
+      );
+    });
+
+
+    function beep(severity) {
+      if (
+        !AC.sound ||
+        !audioCtx ||
+        audioCtx.state !== "running"
+      ) {
+        return;
+      }
+
+      const [frequency, duration, times] =
+        TONES[severity] || TONES.INFO;
+
+      for (let i = 0; i < times; i++) {
+
+        const startTime =
+          audioCtx.currentTime +
+          i * (duration + 80) / 1000;
+
+        const oscillator = audioCtx.createOscillator();
+
+        const gain = audioCtx.createGain();
+
+        oscillator.type =
+          severity === "CRITICAL"
+            ? "square"
+            : "sine";
+
+        oscillator.frequency.value = frequency;
+
+        gain.gain.setValueAtTime(0.0001, startTime);
+
+        gain.gain.exponentialRampToValueAtTime(
+          0.25,
+          startTime + 0.01
+        );
+
+        gain.gain.exponentialRampToValueAtTime(
+          0.0001,
+          startTime + duration / 1000
+        );
+
+        oscillator.connect(gain).connect(
+          audioCtx.destination
+        );
+
+        oscillator.start(startTime);
+
+        oscillator.stop(
+          startTime + duration / 1000 + 0.02
+        );
+      }
+    }
+
+
+    /* =========================================================
+       12. Alert Filters
+    ========================================================= */
+
+    const passes = alert => {
+
+      return (
+        (!AC.filters.severity ||
+          alert.severity === AC.filters.severity) &&
+
+        (!AC.filters.system ||
+          alert.system_type === AC.filters.system)
+      );
+
+    };
+
+
+    /* =========================================================
+       13. Render Alerts
+    ========================================================= */
+
+    function renderAlerts() {
+
+      const list = AC.alerts.filter(passes);
+
+      $("acList").innerHTML = list.map(alert => `
+      <li class="al ${esc(alert.severity)}${alert._fresh ? " fresh" : ""}"
+          data-id="${esc(alert.id)}">
+
+        <span class="al-sev">
+          ${esc(alert.severity)}
+        </span>
+
+        <span class="al-title">
+          ${esc(alert.title)}
+        </span>
+
+        <span class="al-time">
+          ${alert.first_ts
+          ? esc(fmtTime(alert.first_ts, true))
+          : ""}
+        </span>
+
+        <span class="al-meta">
+          ${esc(LABEL[alert.system_type] || alert.system_type)}
+          · ${esc(alert.asset_name)}
+
+          ${alert.zone
+          ? " · " + esc(alert.zone)
+          : ""}
+
+          ${alert.summary
+          ? " — " + esc(alert.summary)
+          : ""}
+        </span>
+
+      </li>
+    `).join("");
+
+      $("acCount").textContent = list.length;
+
+      $("acEmpty").classList.toggle(
+        "show",
+        list.length === 0
+      );
+    }
+
+
+    /* =========================================================
+       14. Alert Filter Events
+    ========================================================= */
+
+    $("acSeverity").onchange = event => {
+
+      AC.filters.severity = event.target.value;
+
+      renderAlerts();
+    };
+
+
+    $("acSystem").onchange = event => {
+
+      AC.filters.system = event.target.value;
+
+      renderAlerts();
+    };
+
+
+    $("acClear").onclick = () => {
+
+      AC.alerts = [];
+
+      AC.seen.clear();
+
+      renderAlerts();
+    };
+
+
+    $("acSound").onclick = event => {
+
+      AC.sound = !AC.sound;
+
+      event.currentTarget.setAttribute(
+        "aria-pressed",
+        String(AC.sound)
+      );
+
+      event.currentTarget.textContent =
+        AC.sound
+          ? "🔔 Sound on"
+          : "🔕 Sound off";
+
+      if (AC.sound) {
+        unlockAudio();
+      }
+    };
+
+
+    /* =========================================================
+       15. Alert Toast Notifications
+    ========================================================= */
+
+    function showToast(alert) {
+
+      const toast = document.createElement("div");
+
+      toast.className = `toast ${esc(alert.severity)}`;
+
+      toast.setAttribute(
+        "role",
+        alert.severity === "CRITICAL"
+          ? "alert"
+          : "status"
+      );
+
+      toast.innerHTML = `
+
+      <div>
+
+        <b>
+          ${esc(alert.severity)}
+          · ${esc(alert.title)}
+        </b>
+
+        <small>
+          ${esc(LABEL[alert.system_type] || alert.system_type)}
+          · ${esc(alert.asset_name)}
+
+          ${alert.zone
+          ? " · " + esc(alert.zone)
+          : ""}
+        </small>
+
+      </div>
+
+      <button type="button" aria-label="Dismiss">
+        ×
+      </button>
+
+    `;
+
+
+      const close = () => {
+
+        if (!toast.isConnected) return;
+
+        toast.classList.add("out");
+
+        setTimeout(() => {
+          toast.remove();
+        }, 300);
+
+      };
+
+
+      toast.querySelector("button").onclick = close;
+
+      $("toasts").prepend(toast);
+
+
+      // Keep maximum 4 visible notifications
+      while ($("toasts").children.length > 4) {
+
+        $("toasts").lastChild.remove();
+
+      }
+
+
+      // Critical alerts remain until manually dismissed
+      // Automatically dismiss all alerts after 8 seconds
+      setTimeout(close, 5000);
+      // if (alert.severity !== "CRITICAL") {
+
+      //   setTimeout(close, 8000);
+
+      // }
+    }
+
+
+    /* =========================================================
+       16. Handle New Real-Time Alerts
+    ========================================================= */
+
+    function onNewAlert(alert) {
+
+      if (
+        !alert ||
+        alert.id == null ||
+        AC.seen.has(alert.id)
+      ) {
+        return;
+      }
+
+
+      // Prevent duplicate alerts
+      AC.seen.add(alert.id);
+
+
+      // Mark as fresh
+      alert._fresh = true;
+
+
+      // Add newest alert at the beginning
+      AC.alerts.unshift(alert);
+
+
+      // Keep maximum 200 alerts
+      if (AC.alerts.length > AC.max) {
+
+        const removed = AC.alerts.splice(AC.max);
+
+        removed.forEach(item => {
+          AC.seen.delete(item.id);
+        });
+
+      }
+
+
+      // Render updated alert list
+      renderAlerts();
+
+
+      // Remove fresh highlight after 6 seconds
+      setTimeout(() => {
+
+        alert._fresh = false;
+
+        renderAlerts();
+
+      }, 6000);
+
+
+      // Sound and toast only if alert matches filters
+      if (passes(alert)) {
+
+        beep(alert.severity);
+
+        showToast(alert);
+
+      }
+
+
+      /*
+        Important:
+        Do not call load() here.
+  
+        Alert Center is independent from Dashboard charts.
+        This avoids sending 3 additional API requests
+        every time a new alert arrives.
+      */
+    }
+
+
+    /* =========================================================
+       17. Load Existing Alerts
+    ========================================================= */
+
+    async function loadInitialAlerts() {
+
+      try {
+
+        const response = await fetch("/alerts?limit=50");
+
+        if (!response.ok) {
+
+          throw new Error(
+            `Alerts API: HTTP ${response.status}`
+          );
+
+        }
+
+        const data = await response.json();
+
+        const items = Array.isArray(data.items)
+          ? data.items
+          : [];
+
+
+        // Sort newest first
+        items.sort((a, b) => {
+
+          const timeA = new Date(
+            a.first_ts || 0
+          ).getTime();
+
+          const timeB = new Date(
+            b.first_ts || 0
+          ).getTime();
+
+          return timeB - timeA;
+
+        });
+
+
+        items.forEach(alert => {
+
+          if (
+            alert.id == null ||
+            AC.seen.has(alert.id)
+          ) {
+            return;
+          }
+
+          AC.seen.add(alert.id);
+
+          AC.alerts.push(alert);
+
+        });
+
+
+        // Respect maximum alert limit
+        AC.alerts = AC.alerts.slice(0, AC.max);
+
+
+        // Render initial alerts
+        renderAlerts();
+
+      } catch (error) {
+
+        console.error(
+          "Failed to load initial alerts:",
+          error
+        );
+
+      }
+    }
+
+
+    /* =========================================================
+       18. Socket.io Connection
+    ========================================================= */
+
+    let alertSocket = null;
+
+
+    function connectAlerts() {
+
+      if (typeof io === "undefined") {
+
+        console.warn(
+          "Socket.io client not loaded"
+        );
+
+        $("acConn").textContent = "offline";
+
+        $("acConn").className = "ac-conn off";
+
+        return null;
+      }
+
+
+      // Prevent duplicate connections
+      if (alertSocket) {
+
+        return alertSocket;
+
+      }
+
+
+      alertSocket = io({
+
+        transports: [
+          "websocket",
+          "polling"
+        ],
+
+        reconnection: true,
+
+        reconnectionDelay: 1000,
+
+        reconnectionDelayMax: 8000
+
+      });
+
+
+      const conn = $("acConn");
+
+
+      const setConn = connected => {
+
+        conn.textContent =
+          connected ? "live" : "offline";
+
+        conn.className =
+          "ac-conn " +
+          (connected ? "on" : "off");
+
+      };
+
+
+      alertSocket.on("connect", () => {
+
+        console.log(
+          "Alert Center connected:",
+          alertSocket.id
+        );
+
+        setConn(true);
+
+      });
+
+
+      alertSocket.on("disconnect", reason => {
+
+        console.warn(
+          "Alert Center disconnected:",
+          reason
+        );
+
+        setConn(false);
+
+      });
+
+
+      alertSocket.on("connect_error", error => {
+
+        console.error(
+          "Socket.io connection error:",
+          error.message
+        );
+
+        setConn(false);
+
+      });
+
+
+      // Listen for new real-time alerts
+      alertSocket.on("new_alert", onNewAlert);
+
+
+      return alertSocket;
+    }
+
+
+    /* =========================================================
+       19. Dashboard Initialization
+    ========================================================= */
+
+    /* =========================================================
+       Incidents: list, evidence, explanation, recommendations, lifecycle
+    ========================================================= */
+    const INC = { selected: null };
+    const SRC_LABEL = { llm: "AI model", fallback: "Deterministic fallback", rules: "Fixed rules" };
+    const VAL_LABEL = {
+      grounding_supported: ["ok", "Grounding checks passed"],
+      failed: ["bad", "Grounding check failed"],
+      not_validated: ["", "Not checked"]
+    };
+
+    async function jsonFetch(url, options) {
+      const response = await fetch(url, options);
+      let body = null;
+      try { body = await response.json(); } catch (_) { /* no JSON body */ }
+      if (!response.ok) {
+        throw new Error((body && body.detail) || `HTTP ${response.status}`);
+      }
+      return body;
+    }
+
+    async function loadIncidents() {
+      try {
+        const data = await jsonFetch("/incidents");
+        const items = data.incidents || [];
+        $("incCount").textContent = String(items.filter(i => i.status !== "resolved").length);
+        $("incEmpty").style.display = items.length ? "none" : "block";
+        $("incList").innerHTML = items.map(i => `
+          <li class="${esc(i.severity.toUpperCase())}" data-id="${esc(i.id)}"
+              aria-selected="${INC.selected === i.id}">
+            <div class="t">
+              <span class="tag ${esc(i.severity.toUpperCase())}">${esc(i.severity.toUpperCase())}</span>
+              <span class="tag">${esc(i.status.toUpperCase())}</span>${esc(i.title)}
+            </div>
+            <div class="m">#${esc(i.id)} · ${esc(i.building)}, ${esc(i.zone)} ·
+              ${esc(fmtTime(i.first_ts, true))} to ${esc(fmtTime(i.last_ts, true))} ·
+              ${esc((i.alert_ids || []).length)} alert(s)</div>
+          </li>`).join("");
+        $("incList").querySelectorAll("li").forEach(li => {
+          li.onclick = () => selectIncident(Number(li.dataset.id));
+        });
+      } catch (error) {
+        console.error("Incidents:", error);
+        $("incList").innerHTML = `<li>Could not load incidents (${esc(error.message)}).</li>`;
+      }
+    }
+
+    async function selectIncident(id) {
+      INC.selected = id;
+      $("incList").querySelectorAll("li").forEach(li =>
+        li.setAttribute("aria-selected", String(Number(li.dataset.id) === id)));
+      const box = $("incDetail");
+      box.hidden = false;
+      box.innerHTML = "Loading incident…";
+      try {
+        const [incident, evidence] = await Promise.all([
+          jsonFetch(`/incidents/${id}`),
+          jsonFetch(`/incidents/${id}/evidence`)
+        ]);
+        renderIncident(incident, evidence);
+      } catch (error) {
+        box.innerHTML = `Could not load incident ${esc(id)}: ${esc(error.message)}`;
+      }
+    }
+
+    function renderIncident(incident, evidence) {
+      const verifiedOk = evidence.total > 0 && evidence.verified === evidence.total;
+      const actions = (incident.recommended_actions || []).map(a => `
+        <li><b>P${esc(a.priority)}</b> ${esc(a.text)}
+            <small>(alert ${esc((a.alert_ids || []).join(", "))})</small></li>`).join("");
+      const alerts = evidence.alerts.map(a => `
+        <div class="alert-row" data-alert="${esc(a.alert_id)}">
+          <b>Alert ${esc(a.alert_id)}</b> · ${esc(a.rule_id)} · ${esc(a.events.length)} evidence row(s)
+          <button type="button" data-explain="${esc(a.alert_id)}">Explain</button>
+          <details><summary>Evidence rows</summary>
+            <table><thead><tr><th>Ref</th><th>Source</th><th>Record</th><th>Time</th><th>Value</th><th>Verified</th></tr></thead>
+            <tbody>${a.events.map(e => `<tr><td>${esc(e.ref)}</td><td>${esc(e.source)}</td><td>#${esc(e.record_id)}</td>
+              <td>${esc(e.ts)}</td><td>${e.value === null || e.value === undefined ? "" : esc(e.value)} ${esc(e.unit || "")}</td>
+              <td>${e.verified ? "yes" : "NO: " + esc(e.problem)}</td></tr>`).join("")}</tbody></table>
+          </details>
+          <div class="explain-out"></div>
+        </div>`).join("");
+      const canAck = incident.status === "open";
+      const canResolve = incident.status !== "resolved";
+      $("incDetail").innerHTML = `
+        <h4 style="margin-top:0">${esc(incident.title)}</h4>
+        <div>
+          <span class="tag ${esc(incident.severity.toUpperCase())}">${esc(incident.severity.toUpperCase())}</span>
+          <span class="tag">${esc(incident.status.toUpperCase())}</span>
+          <span class="tag ${verifiedOk ? "ok" : "bad"}" title="Every evidence row is re-read from the telemetry/event tables and compared">
+            Evidence verified in database: ${esc(evidence.verified)} / ${esc(evidence.total)}</span>
+          <span class="tag" title="How alerts are grouped into an incident">${esc(incident.grouping_rule)}</span>
+        </div>
+        <div class="acts" style="margin-top:8px">
+          ${canAck ? '<button type="button" data-status="acknowledged">Acknowledge</button>' : ""}
+          ${canResolve ? '<button type="button" data-status="resolved">Resolve</button>' : ""}
+        </div>
+        <h4>Recommended actions <small>(approved playbook only)</small></h4>
+        ${actions ? `<ul>${actions}</ul>` : "<p>No playbook action is supported by the evidence.</p>"}
+        <h4>Alerts and evidence</h4>${alerts}`;
+      $("incDetail").querySelectorAll("[data-status]").forEach(b =>
+        b.onclick = () => changeStatus(incident.id, b.dataset.status));
+      $("incDetail").querySelectorAll("[data-explain]").forEach(b =>
+        b.onclick = () => explainAlert(Number(b.dataset.explain), b));
+    }
+
+    async function changeStatus(id, status) {
+      try {
+        await jsonFetch(`/incidents/${id}/status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status })
+        });
+        await loadIncidents();
+        await selectIncident(id);
+        load();
+      } catch (error) {
+        alert(`Could not change the status: ${error.message}`);
+      }
+    }
+
+    async function explainAlert(alertId, button) {
+      const out = button.closest(".alert-row").querySelector(".explain-out");
+      const llm = $("incLlm").checked;
+      button.disabled = true;
+      out.textContent = llm ? "Asking the local model (this can take a while)…" : "Building the explanation…";
+      try {
+        const r = await jsonFetch(`/alerts/${alertId}/explain?use_llm=${llm}`, { method: "POST" });
+        const [cls, text] = VAL_LABEL[r.validation.status] || ["", r.validation.status];
+        const rec = (r.recommendations || []).map(x => `<li><b>P${esc(x.priority)}</b> ${esc(x.text)}
+          <small>(${esc(x.basis.join("; "))})</small></li>`).join("");
+        const lim = (r.limitations || []).map(x => `<li>${esc(x)}</li>`).join("");
+        const verification = r.evidence_verification
+          ? `<span class="tag ${r.evidence_verification.unverified ? "bad" : "ok"}">Evidence rows verified:
+             ${esc(r.evidence_verification.verified)} / ${esc(r.evidence_verification.checked)}</span>` : "";
+        out.innerHTML = `
+          <div class="answer">${esc(r.answer)}</div>
+          <div>
+            <span class="tag">${esc(SRC_LABEL[r.ai_source] || r.ai_source)}${r.model_used ? " · " + esc(r.model_used) : ""}</span>
+            <span class="tag ${cls}" title="Checks that numbers, times, dates and citations exist in the stored evidence and that causes and actions come from the approved playbook. It is not a semantic check.">${esc(text)}</span>
+            <span class="tag">Data: ${esc(r.data_sufficiency)}</span>${verification}
+          </div>
+          ${rec ? `<h4>Recommendations</h4><ul>${rec}</ul>` : ""}
+          ${lim ? `<h4>Limitations</h4><ul>${lim}</ul>` : ""}`;
+      } catch (error) {
+        out.textContent = `Could not explain this alert: ${error.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    $("incRun").onclick = async () => {
+      $("incRun").disabled = true;
+      try {
+        await jsonFetch("/alerts/run", { method: "POST" });
+        await loadIncidents();
+        loadInitialAlerts();
+        load();
+      } catch (error) {
+        alert(`Detection failed: ${error.message}`);
+      } finally {
+        $("incRun").disabled = false;
+      }
+    };
+
+    $("refresh").onclick = () => { load(); loadIncidents(); };
+
+
+    // Load dashboard once
+    load();
+
+
+    // Load existing alerts once
+    loadInitialAlerts();
+    // Load incidents once
+    loadIncidents();
+
+
+    // Establish one Socket.io connection
+    connectAlerts();
+
+
+    console.log(
+      "Dashboard and Alert Center initialized successfully."
+    );
+
+  </script>
+</body>
+
+</html>

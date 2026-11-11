@@ -1,0 +1,202 @@
+/* Floating building-assistant chat widget.
+   Uses the dashboard's CSS variables (--surface, --ink, --line, --accent ...) so it follows light/dark mode. */
+
+.cw-root {
+  --cw-accent: var(--accent, #0f6e7a);
+  --cw-bg: var(--surface, #fff);
+  --cw-ink: var(--ink, #1b2733);
+  --cw-muted: var(--muted, #5c6b7a);
+  --cw-line: var(--line, #d5dbe1);
+  --cw-ok: var(--ok, #2e7d4f);
+  --cw-warn: var(--warn, #b7791f);
+  --cw-crit: var(--crit, #b3261e);
+  position: fixed;
+  right: max(40px, env(safe-area-inset-right));
+  bottom: max(50px, env(safe-area-inset-bottom));
+  z-index: 950;
+  font: inherit;
+  color: var(--cw-ink);
+}
+
+.cw-root *,
+.cw-root *::before,
+.cw-root *::after { box-sizing: border-box; }
+
+.cw-root button,
+.cw-root select,
+.cw-root textarea { font: inherit; color: inherit; }
+
+/* ---------- Floating button ---------- */
+.cw-fab {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--cw-accent);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .28);
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+.cw-fab:hover { transform: scale(1.06); box-shadow: 0 8px 22px rgba(0, 0, 0, .32); }
+.cw-fab:focus-visible,
+.cw-root button:focus-visible,
+.cw-root select:focus-visible,
+.cw-root textarea:focus-visible { outline: 2px solid var(--cw-accent); outline-offset: 2px; }
+.cw-fab:focus-visible { outline-color: #fff; box-shadow: 0 0 0 3px var(--cw-accent); }
+.cw-fab svg { width: 34px; height: 34px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.cw-dot {
+  position: absolute; top: 4px; right: 4px; width: 12px; height: 12px;
+  border-radius: 50%; background: var(--cw-crit); border: 2px solid var(--cw-bg);
+}
+.cw-dot[hidden] { display: none; }
+
+/* ---------- Panel ---------- */
+.cw-panel {
+  position: absolute;
+  right: 0;
+  bottom: 68px;
+  display: flex;
+  flex-direction: column;
+  width: min(400px, calc(100vw - 24px));
+  height: min(600px, calc(100vh - 110px));
+  background: var(--cw-bg);
+  border: 1px solid var(--cw-line);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, .28);
+  overflow: hidden;
+  animation: cwIn .2s ease-out;
+}
+.cw-panel[hidden] { display: none; }
+
+.cw-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 12px 12px 16px;
+  background: var(--cw-accent); color: #fff;
+}
+.cw-head-text { flex: 1; min-width: 0; }
+.cw-title { margin: 0; font-size: 15px; font-weight: 650; line-height: 1.2; }
+.cw-sub { margin: 2px 0 0; font-size: 11.5px; opacity: .85; }
+.cw-iconbtn {
+  display: grid; place-items: center; width: 30px; height: 30px; padding: 0;
+  border: 0; border-radius: 6px; background: transparent; color: #fff; cursor: pointer; opacity: .9;
+}
+.cw-iconbtn:hover { background: rgba(255, 255, 255, .18); opacity: 1; }
+.cw-head .cw-iconbtn:focus-visible { outline-color: #fff; }
+.cw-iconbtn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------- Messages ---------- */
+.cw-log {
+  position: relative;
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 14px 6px;
+  display: flex; flex-direction: column; gap: 10px;
+  scroll-behavior: smooth;
+}
+.cw-msg { display: flex; flex-direction: column; max-width: 92%; }
+.cw-user { align-self: flex-end; align-items: flex-end; }
+.cw-bot,
+.cw-error { align-self: flex-start; align-items: flex-start; }
+
+.cw-bubble {
+  padding: 9px 12px;
+  border-radius: 14px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.cw-user .cw-bubble { background: var(--cw-accent); color: #fff; border-bottom-right-radius: 4px; white-space: pre-wrap; }
+.cw-bot .cw-bubble { background: color-mix(in srgb, var(--cw-ink) 7%, var(--cw-bg)); border-bottom-left-radius: 4px; }
+.cw-error .cw-bubble {
+  background: color-mix(in srgb, var(--cw-crit) 10%, var(--cw-bg));
+  border: 1px solid var(--cw-crit); color: var(--cw-ink); border-bottom-left-radius: 4px;
+}
+.cw-line + .cw-line { margin-top: 4px; }
+.cw-line.cw-li { position: relative; padding-inline-start: 14px; }
+.cw-line.cw-li::before { content: "\2022"; position: absolute; inset-inline-start: 2px; color: var(--cw-muted); }
+
+.cw-ref {
+  display: inline-block; margin: 0 1px; padding: 0 5px;
+  border: 1px solid var(--cw-accent); border-radius: 8px; background: transparent;
+  color: var(--cw-accent); font-size: 10.5px; font-weight: 650; line-height: 1.5;
+  vertical-align: 1px; cursor: pointer;
+}
+.cw-ref:hover { background: var(--cw-accent); color: #fff; }
+
+.cw-retry {
+  margin-top: 8px; padding: 4px 10px; border: 1px solid var(--cw-crit); border-radius: 6px;
+  background: transparent; color: var(--cw-crit); cursor: pointer; font-size: 12.5px;
+}
+.cw-retry:hover { background: var(--cw-crit); color: #fff; }
+
+/* meta tags */
+.cw-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.cw-tag {
+  padding: 1px 8px; border: 1px solid var(--cw-line); border-radius: 10px;
+  font-size: 11px; color: var(--cw-muted); white-space: nowrap;
+}
+.cw-tag.ok { color: var(--cw-ok); border-color: currentColor; }
+.cw-tag.warn { color: var(--cw-warn); border-color: currentColor; }
+
+/* evidence */
+.cw-ev { margin-top: 5px; width: 100%; font-size: 12px; }
+.cw-ev summary { cursor: pointer; color: var(--cw-muted); width: fit-content; }
+.cw-ev ul { list-style: none; margin: 6px 0 0; padding: 0; border: 1px solid var(--cw-line); border-radius: 6px; background: var(--cw-bg); }
+.cw-ev li { padding: 5px 8px; border-bottom: 1px solid var(--cw-line); overflow-wrap: anywhere; }
+.cw-ev li:last-child { border-bottom: 0; }
+.cw-ev li b { color: var(--cw-accent); margin-inline-end: 4px; }
+.cw-ev li.cw-hl { background: color-mix(in srgb, var(--cw-accent) 16%, var(--cw-bg)); }
+.cw-notes { margin: 6px 0 0; color: var(--cw-muted); font-size: 11.5px; }
+
+/* typing indicator */
+.cw-typing .cw-bubble { display: flex; align-items: center; gap: 4px; }
+.cw-typing i {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--cw-muted);
+  animation: cwBlink 1.2s infinite ease-in-out;
+}
+.cw-typing i:nth-child(2) { animation-delay: .15s; }
+.cw-typing i:nth-child(3) { animation-delay: .3s; }
+.cw-typing span { margin-inline-start: 6px; color: var(--cw-muted); font-size: 12px; }
+
+/* suggestions */
+.cw-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.cw-chip {
+  padding: 5px 11px; border: 1px solid var(--cw-line); border-radius: 999px;
+  background: var(--cw-bg); cursor: pointer; font-size: 12.5px;
+}
+.cw-chip:hover { border-color: var(--cw-accent); color: var(--cw-accent); }
+
+/* ---------- Composer ---------- */
+.cw-form { padding: 10px 12px 12px; border-top: 1px solid var(--cw-line); background: var(--cw-bg); }
+.cw-row { display: flex; gap: 8px; align-items: flex-end; }
+.cw-input {
+  flex: 1; min-height: 38px; max-height: 120px; padding: 8px 10px; resize: none;
+  border: 1px solid var(--cw-line); border-radius: 8px; background: var(--cw-bg); line-height: 1.4;
+}
+.cw-input::placeholder { color: var(--cw-muted); }
+.cw-send {
+  display: grid; place-items: center; width: 38px; height: 38px; padding: 0;
+  border: 0; border-radius: 8px; background: var(--cw-accent); color: #fff; cursor: pointer;
+}
+.cw-send:disabled { opacity: .45; cursor: not-allowed; }
+.cw-send svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.cw-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 6px; font-size: 11.5px; color: var(--cw-muted); }
+.cw-win { padding: 1px 4px; border: 1px solid var(--cw-line); border-radius: 4px; background: var(--cw-bg); font-size: 11.5px; }
+
+@keyframes cwIn { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes cwBlink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+
+/* small screens: near full-screen sheet */
+@media (max-width: 480px) {
+  .cw-panel { position: fixed; inset: 8px 8px 84px 8px; width: auto; height: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cw-panel, .cw-fab, .cw-typing i { animation: none !important; transition: none !important; }
+  .cw-log { scroll-behavior: auto; }
+}

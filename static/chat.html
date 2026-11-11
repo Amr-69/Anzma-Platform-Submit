@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Building Assistant</title>
+<style>
+  :root { color-scheme: light dark; --bg:#f6f7f9; --card:#fff; --text:#1a1d21; --muted:#6b7280; --line:#e3e6ea; --accent:#2563eb; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#14171a; --card:#1d2125; --text:#e8eaed; --muted:#9aa3ad; --line:#2d3339; --accent:#5b8def; } }
+  body { margin:0; font-family: system-ui, "Segoe UI", Tahoma, sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width:760px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:1.2rem; margin:0 0 12px; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+  button { font:inherit; cursor:pointer; border:1px solid var(--line); background:var(--card); color:var(--text); border-radius:999px; padding:6px 12px; }
+  button:hover { border-color:var(--accent); }
+  form { display:flex; gap:8px; margin-bottom:16px; }
+  input[type=text] { flex:1; font:inherit; padding:10px 12px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--text); }
+  form button { background:var(--accent); color:#fff; border-color:var(--accent); border-radius:10px; }
+  .msg { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:12px; }
+  .q { color:var(--muted); font-size:.9rem; margin-bottom:6px; }
+  .a { white-space:pre-wrap; line-height:1.6; }
+  .meta { margin-top:8px; font-size:.8rem; color:var(--muted); display:flex; gap:10px; flex-wrap:wrap; }
+  details { margin-top:8px; font-size:.85rem; }
+  summary { cursor:pointer; color:var(--muted); }
+  .f { padding:4px 0; border-top:1px dashed var(--line); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Building Assistant</h1>
+  <div class="chips" id="chips"></div>
+  <form id="form">
+    <input type="text" id="input" placeholder="Ask about the building… (English or Arabic)" autocomplete="off" required minlength="2">
+    <button type="submit">Send</button>
+  </form>
+  <div id="log"></div>
+</main>
+<script>
+const log = document.getElementById('log'), input = document.getElementById('input');
+
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+
+async function ask(message) {
+  const box = el('div', 'msg');
+  box.append(el('div', 'q', message), el('div', 'a', '…'));
+  log.prepend(box);
+  try {
+    const r = await fetch('/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message }) });
+    const d = await r.json();
+    if (d.language) box.dir = d.language === 'ar' ? 'rtl' : 'ltr';
+    if (!r.ok) { box.querySelector('.a').textContent = d.detail || 'Error'; return; }
+    box.querySelector('.a').textContent = d.answer;
+    const meta = el('div', 'meta');
+    meta.append(el('span', '', 'source: ' + d.source), el('span', '', 'intent: ' + d.intent),
+                el('span', '', 'confidence: ' + d.confidence), el('span', '', 'grounding: ' + (d.grounding.passed ? 'passed' : 'failed')));
+    if (!d.data_sufficient) meta.append(el('span', '', 'insufficient data'));
+    box.append(meta);
+    const det = el('details'); det.append(el('summary', '', 'Evidence (' + d.sources.length + ')'));
+    d.sources.forEach(s => det.append(el('div', 'f', '[' + s.ref + '] ' + s.text)));
+    (d.grounding.rejected_answers || []).forEach(x => det.append(el('div', 'f', 'Rejected attempt ' + x.attempt + ': ' + x.violations.join('; '))));
+    if (d.grounding.llm_error) det.append(el('div', 'f', 'LLM: ' + d.grounding.llm_error));
+    box.append(det);
+  } catch (e) { box.querySelector('.a').textContent = 'Request failed: ' + e; }
+}
+
+document.getElementById('form').addEventListener('submit', ev => { ev.preventDefault(); const m = input.value.trim(); if (m) { ask(m); input.value = ''; } });
+fetch('/chat/questions').then(r => r.json()).then(d => {
+  const chips = document.getElementById('chips');
+  d.questions.forEach(q => { const b = el('button', '', q); b.type = 'button'; b.onclick = () => ask(q); chips.append(b); });
+});
+</script>
+</body>
+</html>

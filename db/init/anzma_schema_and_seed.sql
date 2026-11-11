@@ -249,8 +249,7 @@ CROSS JOIN (VALUES
     (2, 11, 1170, 'info',    '{}'),
     (11, 8, 720, 'critical', '{"zone":"Server Room"}'),
     (11, 9, 708, 'info',     '{"cleared_by":"operator"}'),
-    (9, 6, 300, 'warning',   '{"reason":"no video signal"}'),
-    (10, 8, 120, 'critical', '{"zone":"Corridor 2","demo":true}')
+    (9, 6, 300, 'warning',   '{"reason":"no video signal"}')
 ) AS v(asset_id, event_type_id, mins_ago, severity, details);
 
 -- Reset identity counters after inserting explicit ids

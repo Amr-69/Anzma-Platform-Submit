@@ -260,6 +260,33 @@ Tools behind this endpoint **[Proposed]**: `get_building_status`, `get_recent_fa
 
 Suggested questions for UI buttons **[Verified]** (Ahmed's `/chat/questions`, renamed).
 
+## 8. Assistant chat contract
+
+The widget chat endpoint returns a JSON object shaped like this:
+
+```json
+{
+  "answer": "There are 8 critical alerts in the database.",
+  "language": "en",
+  "source": "DATABASE",
+  "grounding": {"passed": true},
+  "sources": [{"ref": "Q1", "text": "verified in database: ..."}],
+  "data_sufficient": true,
+  "window": {"hours": 24},
+  "session_state": {"last_alert_id": 42}
+}
+```
+
+`source` is one of:
+
+- `DATABASE`: the answer was derived from a verified read-only SQL query against the application database.
+- `FALLBACK`: the answer is still grounded in database evidence, but the app did not find a dedicated direct answer path and used the fallback logic.
+- `RULES`: the reply is intentionally not a database fact; it is a guidance rule explaining that the request is unsupported or needs more detail.
+
+`grounding.passed` must be computed from actual query results, not a hard-coded constant. `True` means the response numbers/timestamps/assets came back from the database or a validated fallback path; `False` means the answer is intentionally non-factual guidance.
+
+The widget sends `history` and `session_state` on every request and reuses them for follow-up phrases such as `it`, `that`, or Arabic `ده`.
+
 ## 9. Module interfaces (Python)
 
 ```python
