@@ -153,6 +153,55 @@ class AskRequest(BaseModel):
     use_llm: bool = False
 
 
+def pick_hvac_alert(cur, question):
+    """Latest HVAC_HIGH_TEMP alert. If the question names a location or asset, only an alert for that
+    place qualifies, so the answer is never about a different room than the one asked about."""
+    import re
+
+    q = question.casefold()
+
+    def named_in_question(name):
+        return re.search(r"(?<!\w)" + re.escape(name.casefold()) + r"(?!\w)", q) is not None
+
+    cur.execute("SELECT location_id, name FROM locations")
+    locs = [r for r in cur.fetchall() if named_in_question(r["name"])]
+    cur.execute("SELECT asset_id, name FROM assets")
+    assets = [r for r in cur.fetchall() if named_in_question(r["name"])]
+    named = list(dict.fromkeys(r["name"] for r in locs + assets))
+    cur.execute(
+        """
+        SELECT al.alert_id
+        FROM alerts al JOIN assets a USING (asset_id)
+        WHERE al.rule_id = 'HVAC_HIGH_TEMP'
+          AND (%s OR a.asset_id = ANY(%s) OR a.location_id = ANY(%s))
+        ORDER BY al.detected_ts DESC, al.alert_id DESC
+        LIMIT 1
+        """,
+        (not named, [r["asset_id"] for r in assets], [r["location_id"] for r in locs]),
+    )
+    row = cur.fetchone()
+    if row is not None:
+        return row
+    if not named:
+        raise HTTPException(status_code=404, detail="No HVAC temperature alert is currently available.")
+    cur.execute(
+        """
+        SELECT a.name, l.name AS zone
+        FROM alerts al JOIN assets a USING (asset_id) JOIN locations l USING (location_id)
+        WHERE al.rule_id = 'HVAC_HIGH_TEMP'
+        ORDER BY al.detected_ts DESC, al.alert_id DESC
+        LIMIT 1
+        """
+    )
+    latest = cur.fetchone()
+    hint = (f" The latest HVAC temperature alert is for {latest['name']} ({latest['zone']});"
+            " ask about it, or ask without naming a place." if latest else "")
+    raise HTTPException(
+        status_code=404,
+        detail=f"No HVAC temperature alert exists for {', '.join(named)}.{hint}",
+    )
+
+
 @asgi_app.post("/ask")
 def ask(request: AskRequest) -> dict[str, Any]:
     """
@@ -178,23 +227,7 @@ def ask(request: AskRequest) -> dict[str, Any]:
                 pipeline.detect(cur)
                 conn.commit()
 
-                cur.execute(
-                    """
-                    SELECT alert_id
-                    FROM alerts
-                    WHERE rule_id = 'HVAC_HIGH_TEMP'
-                    ORDER BY detected_ts DESC, alert_id DESC
-                    LIMIT 1
-                    """
-                )
-                row = cur.fetchone()
-
-                if row is None:
-                    raise HTTPException(
-                        status_code=404,
-                        detail="No HVAC temperature alert is currently available.",
-                    )
-
+                row = pick_hvac_alert(cur, request.question)
                 alert_id = row["alert_id"]
                 result = pipeline.explain_alert(
                     cur,

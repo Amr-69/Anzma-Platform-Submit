@@ -94,11 +94,27 @@ def _refs(alert, asset):
     return {"assets": [aid] if aid is not None else [], "incidents": [inc] if inc is not None else []}
 
 
+def data_age_notes(alert, now=None, stale_after_min=60):
+    """A reading older than stale_after_min describes a past condition; say so instead of implying it is live."""
+    from datetime import datetime, timezone
+
+    last = alert.get("last_ts")
+    if not isinstance(last, datetime):
+        return []
+    now = now or datetime.now(timezone.utc)
+    age_min = (now - last).total_seconds() / 60
+    if age_min <= stale_after_min:
+        return []
+    hours = round(age_min / 60)
+    return [f"The newest evidence is from {last.astimezone(timezone.utc):%Y-%m-%d %H:%M} UTC, about {hours} h before now; "
+            "this describes a past condition and the current state is not confirmed."]
+
+
 def explain_alert(alert, asset, use_llm=True):
     """Alert -> explanation -> independent validation -> contract response (+ playbook recommendations)."""
     rec = recs.recommend(alert)
     sufficiency, limitations = assess_evidence(alert.get("evidence"), causes_supported=bool(rec["probable_causes"]))
-    limitations = limitations + rec["limitations"]
+    limitations = limitations + rec["limitations"] + data_age_notes(alert)
 
     if sufficiency == NO_DATA:
         return standard_response(
