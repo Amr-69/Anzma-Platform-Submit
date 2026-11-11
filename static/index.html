@@ -250,9 +250,8 @@
         const lines = data.limitations.map(item => `<div>• ${esc(item)}</div>`);
         const diag = data.diagnostics || {};
         if (diag.llm_attempted && data.ai_source === "fallback") {
-          const why = diag.llm_error
-            ? esc(diag.llm_error)
-            : (diag.rejected_answers || []).map(r => `attempt ${r.attempt}: ${esc((r.violations || []).join("; "))}`).join(" | ");
+          const rej = (diag.rejected_answers || []).map(r => `attempt ${r.attempt}: ${esc((r.violations || []).join("; "))}`).join(" | ");
+          const why = [diag.llm_error ? esc(diag.llm_error) : "", rej].filter(Boolean).join(" - ");
           lines.push(`<div class="muted"><strong>Live model diagnostic:</strong> ${why || "no detail recorded"}</div>`);
         }
         limitations.innerHTML = lines.length ? lines.join("") : "No limitations reported.";

@@ -42,6 +42,8 @@ Square brackets are reserved for event refs such as [E2]. Refer to causes and ac
 3. Choose cause_ids and action_ids only from allowed_causes and allowed_actions. Do not write new causes or actions.
 4. Times are UTC in HH:MM form. Write times exactly as they appear in the evidence.
 5. If the evidence is not enough to name a cause, say so in the summary and return an empty cause_ids list.
+6. END EVERY SENTENCE that states a reading, time or duration with its citation, for example "... stayed above the warning threshold [E1-E4]." or "... at HH:MM UTC [E7]." A summary with no [E#] citation is rejected. Never put a citation only in evidence_refs.
+7. cause_ids, action_ids and evidence_refs are arrays of plain strings such as ["HVAC_VERIFY"] and ["E1","E2"], never objects.
 Return JSON only: {"summary": "2-3 sentences with citations", "cause_ids": [], "action_ids": [], "evidence_refs": [], "confidence": "low|medium|high"}"""
 def parse_citations(text):
     """Return (refs, malformed). Accepts [E3], [E1, E4] and [E1-E5]; anything else in brackets is malformed."""
@@ -160,7 +162,8 @@ def check_text(text, pkg):
 
 def call_ollama(messages):
     body = json.dumps({"model": OLLAMA_MODEL, "messages": messages, "stream": False,
-                       "format": "json", "options": {"temperature": 0}}).encode()
+                       "format": "json", "keep_alive": os.getenv("OLLAMA_KEEP_ALIVE", "30m"),
+                       "options": {"temperature": 0, "num_predict": 400}}).encode()
     req = urllib.request.Request(f"{OLLAMA_HOST}/api/chat", data=body,
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=OLLAMA_TIMEOUT) as resp:
@@ -209,6 +212,13 @@ def coerce_ref(r):
     if isinstance(r, int) or (isinstance(r, str) and r.strip().isdigit()):
         return f"E{int(r)}"
     return str(r).strip()
+
+
+def coerce_id(x):
+    """Small models sometimes return {"id": "X"} instead of "X". Only a plain string id can ever match the playbook."""
+    if isinstance(x, dict):
+        x = x.get("id")
+    return x if isinstance(x, str) else None
 
 
 PAREN_REF = re.compile(r"\((E\d+)\)")
@@ -276,6 +286,8 @@ def explain(alert, asset, use_llm=True):
         action_in = data.get("action_ids") or []
         cause_in = cause_in if isinstance(cause_in, list) else [cause_in]
         action_in = action_in if isinstance(action_in, list) else [action_in]
+        cause_in = [i for i in map(coerce_id, cause_in) if i]
+        action_in = [i for i in map(coerce_id, action_in) if i]
 
         if not violations:
             cause_ids = [c for c in cause_in if c in {x["id"] for x in causes}]
@@ -293,8 +305,9 @@ def explain(alert, asset, use_llm=True):
         rejected.append({"attempt": attempt, "violations": violations, "summary": summary[:300]})
         messages += [{"role": "assistant", "content": raw},
                      {"role": "user", "content": "Your answer was rejected: " + "; ".join(violations)
-                      + ". Rewrite it using only numbers, times and citations present in the evidence. "
-                        "Cite events as [E1] with the exact text E and the number. evidence_refs must be strings like \"E1\"."}]
+                      + ". Rewrite the same answer, keeping every fact, and add citations like [E1] or [E1-E7] at the end of each "
+                        "sentence that states a reading, time or duration (example ending: ... [E1-E4].). Use only numbers, times "
+                        "and events present in the evidence. ids and refs must be plain strings."}]
     return fallback(alert, pkg, causes, actions,
                     {"llm_attempted": True, "llm_error": "answer failed grounding validation twice",
                      "rejected_answers": rejected})
