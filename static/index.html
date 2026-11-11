@@ -246,9 +246,16 @@
           : "<li>No approved recommendation is available.</li>";
 
 
-        limitations.innerHTML = data.limitations.length
-          ? data.limitations.map(item => `<div>• ${item}</div>`).join("")
-          : "No limitations reported.";
+        const esc = t => String(t).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+        const lines = data.limitations.map(item => `<div>• ${esc(item)}</div>`);
+        const diag = data.diagnostics || {};
+        if (diag.llm_attempted && data.ai_source === "fallback") {
+          const why = diag.llm_error
+            ? esc(diag.llm_error)
+            : (diag.rejected_answers || []).map(r => `attempt ${r.attempt}: ${esc((r.violations || []).join("; "))}`).join(" | ");
+          lines.push(`<div class="muted"><strong>Live model diagnostic:</strong> ${why || "no detail recorded"}</div>`);
+        }
+        limitations.innerHTML = lines.length ? lines.join("") : "No limitations reported.";
 
 
         resultCard.style.display = "block";

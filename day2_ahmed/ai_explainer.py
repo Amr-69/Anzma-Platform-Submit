@@ -10,6 +10,7 @@ Builds incident explanations from an alert's stored evidence.
   explanation built from the same evidence and playbook is returned instead.
 """
 import json
+import logging
 import os
 import re
 import urllib.request
@@ -18,8 +19,14 @@ from datetime import datetime
 import alert_config as cfg
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
 OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "120"))
+log = logging.getLogger("anzma.ai")
+if not log.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(asctime)s [anzma.ai] %(message)s"))
+    log.addHandler(_h)
+    log.setLevel(logging.INFO)
 
 CITE = re.compile(r"\[([^\[\]]*)\]")
 DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
@@ -195,6 +202,15 @@ def fallback(alert, pkg, causes, actions, note=None):
         
     confidence = "medium" if any(c["supported_by"] != ["generic possibility for this rule"] for c in causes) else "low"
     return finish(summary, causes, actions, pkg, "FALLBACK", confidence, grounding)
+def coerce_ref(r):
+    """Small models return refs as 1, "1" or "E1". Fix the FORMAT only; the ref must still exist in the evidence."""
+    if isinstance(r, bool):
+        return str(r)
+    if isinstance(r, int) or (isinstance(r, str) and r.strip().isdigit()):
+        return f"E{int(r)}"
+    return str(r).strip()
+
+
 PAREN_REF = re.compile(r"\((E\d+)\)")
 
 def normalize_summary(text):
@@ -231,41 +247,54 @@ def explain(alert, asset, use_llm=True):
     })
     messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}]
     rejected = []
+    log.info("LIVE start model=%s host=%s use_llm=True alert_rule=%s", OLLAMA_MODEL, OLLAMA_HOST, alert["rule_id"])
     for attempt in (1, 2):
         try:
-            data = parse_json(call_ollama(messages))
+            raw = call_ollama(messages)
+            log.info("LIVE attempt=%s raw_response=%s", attempt, raw[:1500])
+            data = parse_json(raw)
         except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}"[:200]
+            log.error("LIVE attempt=%s call/parse failed: %s", attempt, err)
             return fallback(alert, pkg, causes, actions,
-                            {"llm_attempted": True, "llm_error": f"{type(exc).__name__}: {exc}"[:200],
-                             "rejected_answers": rejected})
-        summary = str(data.get("summary", "")).strip()
-        summary, normalized = normalize_summary(summary)
-        violations = check_text(summary, pkg) if summary else ["empty summary"]
+                            {"llm_attempted": True, "llm_error": err, "rejected_answers": rejected})
         refs = {e["ref"] for e in pkg["events"]}
-        
-    
-        for r in data.get("evidence_refs", []):
-            got, bad_fmt = parse_citations(f"[{r}]")
+        violations = []
+        if not isinstance(data, dict):
+            violations.append("model did not return a JSON object")
+            data = {}
+        summary = str(data.get("summary") or "").strip()
+        summary, normalized = normalize_summary(summary)
+        violations += check_text(summary, pkg) if summary else ["empty summary"]
+        ev_refs = data.get("evidence_refs") or []
+        ev_refs = ev_refs if isinstance(ev_refs, list) else [ev_refs]
+        for r in ev_refs:
+            got, bad_fmt = parse_citations(f"[{coerce_ref(r)}]")
             if bad_fmt or any(g not in refs for g in got):
                 violations.append(f"unknown evidence_ref {r}")
-                
+        cause_in = data.get("cause_ids") or []
+        action_in = data.get("action_ids") or []
+        cause_in = cause_in if isinstance(cause_in, list) else [cause_in]
+        action_in = action_in if isinstance(action_in, list) else [action_in]
+
         if not violations:
-            cause_ids = [c for c in data.get("cause_ids", []) if c in {x["id"] for x in causes}]
-            action_ids = [a for a in data.get("action_ids", []) if a in {x["id"] for x in actions}]
+            cause_ids = [c for c in cause_in if c in {x["id"] for x in causes}]
+            action_ids = [a for a in action_in if a in {x["id"] for x in actions}]
             chosen_causes = [c for c in causes if c["id"] in cause_ids]
             chosen_actions = [a for a in actions if a["id"] in action_ids] or actions
-            dropped = [x for x in data.get("cause_ids", []) + data.get("action_ids", [])
-                       if x not in cause_ids + action_ids]
+            dropped = [x for x in cause_in + action_in if x not in cause_ids + action_ids]
             conf = data.get("confidence") if data.get("confidence") in ("low", "medium", "high") else "low"
+            log.info("LIVE attempt=%s ACCEPTED", attempt)
             return finish(summary, chosen_causes, chosen_actions, pkg, "OLLAMA", conf,
                           {"passed": True, "violations": [], "attempts": attempt,
-                           "rejected_answers": rejected,
-                           "normalized": normalized,
+                           "rejected_answers": rejected, "normalized": normalized,
                            "ignored_ids_not_in_playbook": dropped}, OLLAMA_MODEL)
-        rejected.append({"attempt": attempt, "violations": violations})
-        messages += [{"role": "assistant", "content": json.dumps(data)},
+        log.warning("LIVE attempt=%s REJECTED violations=%s summary=%r", attempt, violations, summary[:300])
+        rejected.append({"attempt": attempt, "violations": violations, "summary": summary[:300]})
+        messages += [{"role": "assistant", "content": raw},
                      {"role": "user", "content": "Your answer was rejected: " + "; ".join(violations)
-                      + ". Rewrite it using only numbers, times and citations present in the evidence."}]
+                      + ". Rewrite it using only numbers, times and citations present in the evidence. "
+                        "Cite events as [E1] with the exact text E and the number. evidence_refs must be strings like \"E1\"."}]
     return fallback(alert, pkg, causes, actions,
                     {"llm_attempted": True, "llm_error": "answer failed grounding validation twice",
                      "rejected_answers": rejected})

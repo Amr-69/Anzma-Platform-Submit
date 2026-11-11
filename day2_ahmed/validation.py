@@ -126,4 +126,5 @@ def explain_alert(alert, asset, use_llm=True):
         model_used=explanation.get("model"), tool_used="explain_alert",
         ai_source=AI_SOURCE[explanation["source"]], data_sufficiency=sufficiency,
         validation=validation, limitations=limitations) | {
-        "recommendations": rec["recommendations"], "probable_causes": rec["probable_causes"]}
+        "recommendations": rec["recommendations"], "probable_causes": rec["probable_causes"],
+        "diagnostics": {k: g[k] for k in ("llm_attempted", "llm_error", "rejected_answers", "attempts") if k in g}}
