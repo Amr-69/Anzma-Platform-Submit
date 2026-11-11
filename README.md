@@ -218,6 +218,223 @@ docker compose up -d --build db api
 
 > **Warning:** `docker compose down -v` permanently deletes the local PostgreSQL data and downloaded Ollama models in the Compose volumes.
 
+## Windows PowerShell: terminal commands
+
+The commands below provide a reproducible Windows workflow for setting up, starting, exercising, and testing the current repository. They are the supported project commands, not a verbatim export of every historical terminal command used while developing it.
+
+### 1. Clone the repository
+
+Run these commands in PowerShell:
+
+```powershell
+git clone https://github.com/Amr-69/Anzma-Platform-Submit.git
+Set-Location .\Anzma-Platform-Submit
+```
+
+For an existing checkout, update the current branch instead:
+
+```powershell
+git switch main
+git pull origin main
+git status
+```
+
+### 2. Create a Python environment
+
+Python 3.11 is used by the project:
+
+```powershell
+py -3.11 --version
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+If PowerShell blocks virtual-environment activation, run this once for the current Windows user, then activate again:
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+.\.venv\Scripts\Activate.ps1
+```
+
+### 3. Create the local environment file
+
+Run this only when `.env` does not already exist:
+
+```powershell
+Copy-Item .env.example .env
+notepad .env
+```
+
+Set a real local PostgreSQL password in `.env`. For example:
+
+```dotenv
+PGHOST=localhost
+PGPORT=5432
+PGDATABASE=anzma
+PGUSER=postgres
+PGPASSWORD=replace-with-your-local-password
+
+OLLAMA_MODEL=qwen2.5:3b
+OLLAMA_TIMEOUT=120
+```
+
+Do not commit `.env`.
+
+### 4. Start the complete application with Docker Compose
+
+From the repository root:
+
+```powershell
+docker compose up -d --build db api
+docker compose ps
+docker compose logs --tail=100 db api
+```
+
+This starts PostgreSQL and the FastAPI application. On the first start with a new, empty `pgdata` volume, PostgreSQL automatically executes the mounted initialization files in order:
+
+1. `db/init/anzma_schema_and_seed.sql`
+2. `day2_ahmed/migrations/003_incidents.sql`
+
+Check the service response:
+
+```powershell
+Invoke-RestMethod -Uri http://localhost:8000/health
+```
+
+Open the browser demo and API documentation:
+
+```powershell
+Start-Process "http://localhost:8000"
+Start-Process "http://localhost:8000/docs"
+```
+
+### 5. Start the optional local AI model service
+
+The platform works without Ollama by using its deterministic fallback. To run Ollama in Docker and download the configured model:
+
+```powershell
+docker compose up -d ollama ollama-init
+docker compose logs --tail=100 ollama-init
+docker compose exec ollama ollama list
+```
+
+The Compose default model is `qwen2.5:3b`. The browser demo currently sends `use_llm: false`; use the API with `use_llm: true` to request a model-generated explanation.
+
+### 6. Send a test question to the API
+
+Use PowerShell's native HTTP command:
+
+```powershell
+$body = @{
+    question = "Why is CRAC 1 temperature high?"
+    use_llm = $false
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+    -Uri "http://localhost:8000/ask" `
+    -Method Post `
+    -ContentType "application/json" `
+    -Body $body
+```
+
+To request Ollama for this request, change `use_llm = $false` to `use_llm = $true`.
+
+Check the dashboard filter options and KPI summary:
+
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8000/dashboard/filters"
+
+Invoke-RestMethod -Uri "http://localhost:8000/dashboard/summary"
+```
+
+### 7. Run the tests
+
+**Offline tests** — no PostgreSQL or Ollama is required:
+
+```powershell
+python day2_ahmed\test_day2_ahmed.py
+```
+
+**PostgreSQL integration tests** — these build a temporary database named `anzma_day2_test`. The database user must be allowed to create and drop databases.
+
+When running the test script from the activated Windows Python environment, set the PostgreSQL connection variables in the current PowerShell session:
+
+```powershell
+$env:PGHOST = "localhost"
+$env:PGPORT = "5432"
+$env:PGUSER = "postgres"
+$env:PGPASSWORD = "replace-with-your-local-password"
+
+python day2_ahmed\test_day2_integration.py
+```
+
+Alternatively, run the integration test inside the API container, which already receives its PostgreSQL connection settings from Compose:
+
+```powershell
+docker compose run --rm api python day2_ahmed/test_day2_integration.py
+```
+
+**S1 end-to-end evidence run** — this builds a separate database named `anzma_e2e` and runs the cooling-failure workflow:
+
+```powershell
+python day2_ahmed\e2e_s1.py --build
+```
+
+To also try the Ollama model from the host environment:
+
+```powershell
+$env:OLLAMA_HOST = "http://localhost:11434"
+$env:OLLAMA_MODEL = "qwen2.5:3b"
+python day2_ahmed\e2e_s1.py --build --llm
+```
+
+> **Database safety:** the `--build` option drops and recreates the named `anzma_e2e` database. The integration test also recreates `anzma_day2_test`. These commands are intended for their dedicated test databases, not for a database containing data you need to keep.
+
+**Dashboard database smoke check** — requires the main database to be running and the connection values to be available through `.env`:
+
+```powershell
+python test_dashboard.py
+```
+
+### 8. Run FastAPI directly from the Python environment (alternative to the Docker API)
+
+Use this option when you want to run the API process on Windows while PostgreSQL runs in Docker. Do not start a second API on port `8000` while the Compose `api` service is already running.
+
+Start only the database:
+
+```powershell
+docker compose up -d db
+```
+
+Make sure `.env` has `PGHOST=localhost`, then activate the virtual environment and run:
+
+```powershell
+python -m uvicorn App:asgi_app --reload --host 127.0.0.1 --port 8000
+```
+
+Stop the local server with `Ctrl+C`.
+
+### 9. Stop the Docker services
+
+Stop the containers while keeping the database and model volumes:
+
+```powershell
+docker compose down
+```
+
+To delete the volumes and rebuild the seeded database and model storage from scratch:
+
+```powershell
+docker compose down -v
+docker compose up -d --build db api
+```
+
+> **Warning:** `docker compose down -v` permanently deletes the local PostgreSQL data and downloaded Ollama models stored in the Compose volumes.
+
+---
+
 ## Current HTTP API
 
 The following routes are implemented in `App.py` on this branch. FastAPI also exposes the interactive OpenAPI page at `/docs`.
