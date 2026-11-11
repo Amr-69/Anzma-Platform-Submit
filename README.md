@@ -1,164 +1,342 @@
-# Anzma AI Insight – Unified Platform
+# Anzma AI Insight
 
-Joint project by **Ahmed** and **Amr**. One platform that takes a simulated fault all the way to a validated, evidence-backed recommendation on a dashboard.
+**Anzma AI Insight** is a demo smart-building operations platform. It uses simulated building telemetry and events to calculate operational KPIs, detect configured faults, group related alerts into incidents, verify supporting evidence, and produce evidence-grounded explanations and corrective recommendations.
+
+The current implementation in `main` covers five building-system domains:
+
+- HVAC
+- Networking
+- Access Control
+- CCTV
+- Fire Alarm
+
+> **Project status:** This is an integration/demo build using seeded data. It is not a production-ready building-management system. The current assistant is intentionally narrow, the data is simulated, and authentication is not implemented.
+
+## What the platform does
+
+1. Loads reference data and a historical sample dataset into PostgreSQL.
+2. Reads telemetry and event records for the supported building assets.
+3. Runs configured threshold, anomaly, and compound alert rules.
+4. Groups related alerts into incidents and ranks them by severity, status, and recency.
+5. Re-reads evidence from the original fact tables before using it in an explanation.
+6. Generates explanations through a local Ollama model when explicitly requested, or uses a deterministic fallback.
+7. Offers recommendations from conditional playbooks rather than allowing the model to invent actions.
+8. Exposes dashboard KPI and incident endpoints through FastAPI, with a small browser-based demo interface.
+
+### High-level data flow
 
 ```text
-Simulated Fault → Alert Detection → Incident / Evidence Retrieval
-   → AI Explanation → Validation → Recommendation → Dashboard
+Seeded telemetry and events
+            |
+            v
+       PostgreSQL
+            |
+            v
+      Alert detection
+            |
+            v
+     Incident grouping
+            |
+            v
+  Evidence re-verification
+            |
+            v
+  Explanation + grounding checks
+        /           \
+   Ollama          Fallback
+        \           /
+            |
+            v
+ Conditional recommendations
+            |
+            v
+       FastAPI / UI
 ```
 
-If the AI model (Ollama) is unavailable, the system falls back to a deterministic explanation that goes through the same validation and states the limitation.
+## Technology stack
 
-## Current status
-
-The platform is operational with PostgreSQL and the FastAPI service. AI explanations currently use a validated deterministic fallback; Ollama integration is implemented and ready for model download.
-
-| Area | Status |
+| Area | Technology |
 |---|---|
-| PostgreSQL schema + seed data | Done |
-| Alert detection, incidents, evidence, validation, recommendations, fallback | Done, tested on PostgreSQL 16 (28/28 integration, 21/21 offline) |
-| Dashboard KPI logic (`app/dashboard_core_pg.py`) | Done |
-| API entry point (`App.py`) connecting everything | Done |
-| Dashboard showing incidents, evidence and recommendations | Done |
-| Ollama integration | Implemented; model download pending |
-| Real Ollama model tested end to end | Previously completed; currently pending model download in this environment |
-| Validated fallback response | Active and working |
+| Language | Python 3.11 |
+| API | FastAPI + Uvicorn |
+| Database | PostgreSQL 16 |
+| Database drivers | psycopg 3 and psycopg2 |
+| AI runtime | Ollama (optional at runtime) |
+| Frontend | HTML, CSS, and JavaScript |
+| Deployment for the demo | Docker Compose |
 
 ## Repository structure
 
 ```text
 Anzma-Platform-Submit/
-├── README.md
-├── docker-compose.yml          # db (PostgreSQL 16), ollama, ollama-init, api
-├── Dockerfile                  # API image (uvicorn)
-├── requirements.txt
-├── .env.example                # copy to .env (never commit .env)
-├── data-model.sql, DATA_MODEL.md, ERD-new.png
-├── DECISION_MATRIX.md
-├── reference_data.py
+├── App.py                         # FastAPI application and HTTP routes
 ├── app/
-│   └── dashboard_core_pg.py    # dashboard KPIs on PostgreSQL
-├── db/init/
-│   └── anzma_schema_and_seed.sql   # schema + seed (runs on first start of an empty DB)
-├── day2_ahmed/                 # alert / incident / evidence / validation pipeline
-│   ├── migrations/003_incidents.sql
-│   ├── db_adapter.py           # only place that reads/writes the new tables
-│   ├── alert_config.py, alert_engine.py
-│   ├── incident_engine.py, evidence.py
-│   ├── integrity_rules.py, validation.py
-│   ├── recommendations.py, ai_explainer.py
-│   ├── pipeline.py             # detect(), explain_alert(), explain_incident()
-│   ├── test_day2_integration.py, test_day2_ahmed.py
-│   └── DAY2_AHMED_HANDOVER.md, TEST_RESULTS_DAY2.txt
-└── docs/
-    ├── ARCHITECTURE.md, API_CONTRACT.md, INTEGRATION_PLAN.md
-    └── submission document and presentation
+│   └── dashboard_core_pg.py       # PostgreSQL dashboard KPI calculations
+├── db/
+│   └── init/
+│       └── anzma_schema_and_seed.sql
+│                                  # Current schema and initial simulated dataset
+├── day2_ahmed/
+│   ├── alert_config.py             # Alert rules, thresholds, and playbooks
+│   ├── alert_engine.py             # Threshold, anomaly, and compound detection
+│   ├── db_adapter.py               # Database mapping and access for the alert pipeline
+│   ├── incident_engine.py          # Incident grouping, ranking, and lifecycle
+│   ├── evidence.py                  # Evidence retrieval and source-row verification
+│   ├── ai_explainer.py              # Ollama calls and deterministic fallback
+│   ├── validation.py                # Grounding checks and response envelope
+│   ├── recommendations.py           # Conditional playbook recommendations
+│   ├── integrity_rules.py           # System/record compatibility checks
+│   ├── pipeline.py                  # Detection and explanation orchestration
+│   ├── migrations/
+│   │   └── 003_incidents.sql        # Incidents table and alerts link
+│   ├── test_day2_ahmed.py           # Offline/unit-style tests
+│   ├── test_day2_integration.py     # PostgreSQL integration tests
+│   ├── TEST_RESULTS_DAY2.txt        # Last committed test output
+│   └── DAY2_AHMED_HANDOVER.md       # Pipeline handover and known limitations
+├── static/
+│   └── index.html                  # Browser-based ask/incident demo
+├── docs/
+│   ├── ARCHITECTURE.md
+│   ├── API_CONTRACT.md
+│   └── INTEGRATION_PLAN.md
+├── DATA_MODEL.md
+├── DECISION_MATRIX.md
+├── data-model.sql                  # Earlier draft; not the current bootstrap schema
+├── reference_data.py               # Dashboard system-type values
+├── requirements.txt
+├── Dockerfile
+├── docker-compose.yml
+└── .env.example
 ```
 
-## Quick start (Docker)
+## Sample data
 
-Requirements: Docker Desktop (or Docker Engine + Compose v2).
+A fresh database initialization loads simulated reference data and historical records. The current seed contains:
+
+| Data | Seeded amount / coverage |
+|---|---:|
+| Buildings | 2 |
+| Locations | 6 |
+| Assets | 11 |
+| System types | 5 |
+| Metric types | 8 |
+| Event types | 12 |
+| Telemetry history | 78 hours, generated at 15-minute intervals |
+| Heartbeat history | Hourly records, with the configured camera-offline gap |
+
+The sample data is synthetic. It does not represent live connections to HVAC controllers, network equipment, access-control panels, cameras, or fire panels.
+
+### Database initialization source of truth
+
+For the current implementation, initialize the database in this order:
+
+1. `db/init/anzma_schema_and_seed.sql` — schema, reference data, telemetry, and event seed.
+2. `day2_ahmed/migrations/003_incidents.sql` — incidents table, indexes, and `alerts.incident_id`.
+
+Docker Compose mounts both files into PostgreSQL's initialization directory in that order. PostgreSQL runs these scripts automatically **only when the database volume is first created and empty**.
+
+Do not use the root-level `data-model.sql` as the current bootstrap schema; its header identifies it as an earlier draft.
+
+## Quick start with Docker Compose
+
+### Prerequisites
+
+- Docker Desktop with Docker Compose v2, or Docker Engine with the Compose plugin.
+- Git.
+- Enough memory and disk space for PostgreSQL, the API, and (optionally) the Ollama model.
+
+### 1. Clone the repository
 
 ```bash
-git clone [https://github.com/Amr-69/Anzma-Platform-Submit.git](https://github.com/Amr-69/Anzma-Platform-Submit.git)
+git clone https://github.com/Amr-69/Anzma-Platform-Submit.git
 cd Anzma-Platform-Submit
-
-cp .env.example .env        # then set PGPASSWORD (required)
-docker compose up -d --build db
 ```
 
-Apply the incidents migration (the `db/init` script only runs on an empty volume, so `003` is applied manually):
+### 2. Configure the environment
 
 ```bash
-docker compose exec -T db psql -U postgres -d anzma < day2_ahmed/migrations/003_incidents.sql
+cp .env.example .env
 ```
 
-Start the API and database:
+Edit `.env` and set a non-placeholder database password:
+
+```dotenv
+PGDATABASE=anzma
+PGUSER=postgres
+PGPASSWORD=replace-with-a-local-password
+
+OLLAMA_MODEL=qwen2.5:3b
+OLLAMA_TIMEOUT=120
+```
+
+Keep `.env` local. Do not commit database passwords, API secrets, or other credentials.
+
+### 3. Start PostgreSQL and the API
 
 ```bash
-docker compose up -d db api
+docker compose up -d --build db api
 docker compose ps
 ```
 
-The API is published on the host port set in `ports:` of the `api` service in `docker-compose.yml`. Useful endpoints are `/health`, `/docs`, `/dashboard`, and `/ask`.
+On a new Docker volume, PostgreSQL automatically creates the schema, loads the sample data, and applies the incidents migration through the mounted initialization scripts. No separate manual migration command is required for a fresh volume.
 
-## AI model status
+### 4. Open the application
 
-The application supports Ollama through the `OLLAMA_HOST`, `OLLAMA_MODEL`, and `OLLAMA_TIMEOUT` settings.
+- Browser demo: [http://localhost:8000](http://localhost:8000)
+- FastAPI interactive documentation: [http://localhost:8000/docs](http://localhost:8000/docs)
+- Service liveness endpoint: [http://localhost:8000/health](http://localhost:8000/health)
 
-- Configured model: `qwen2.5:7b`
-- Ollama service: defined in `docker-compose.yml`
-- Model download service: `ollama-init`
-- Current environment: the Ollama model has not been downloaded yet
-- Current behaviour: the platform returns a validated deterministic fallback response
+The `/health` endpoint currently reports that the API process is responding; it does **not** verify the PostgreSQL connection.
 
-When Ollama is unavailable, the system does not fail. It returns an evidence-backed deterministic answer, validates it against the available facts and playbook, and marks it as `fallback`.
+### 5. Optional: start Ollama
+
+The API can operate without Ollama because it has a deterministic fallback. To start the local model service and its one-shot model download service:
+
+```bash
+docker compose up -d ollama ollama-init
+docker compose logs -f ollama-init
+```
+
+The Compose default is `qwen2.5:3b`. The model is stored in the named `ollama_models` volume. The API container is configured to reach Ollama at `http://ollama:11434`.
+
+The browser demo currently sends `use_llm: false` with its questions, so it uses the deterministic path even when Ollama is running. To request an Ollama explanation, use the API with `use_llm: true` as shown below.
+
+### Stopping the services
+
+```bash
+docker compose down
+```
+
+This stops the containers but preserves the database and model volumes.
+
+To delete the volumes and rebuild the sample database from scratch:
+
+```bash
+docker compose down -v
+docker compose up -d --build db api
+```
+
+> **Warning:** `docker compose down -v` permanently deletes the local PostgreSQL data and downloaded Ollama models in the Compose volumes.
+
+## Current HTTP API
+
+The following routes are implemented in `App.py` on this branch. FastAPI also exposes the interactive OpenAPI page at `/docs`.
+
+| Method | Route | Purpose |
+|---|---|---|
+| GET | `/` | Serves the static browser demo |
+| GET | `/health` | API process liveness response |
+| GET | `/dashboard/filters` | Returns available system/building filters and data time coverage |
+| GET | `/dashboard/summary` | Returns the eight dashboard KPIs for the requested filters and time window |
+| GET | `/incidents` | Lists incidents |
+| GET | `/incidents/{incident_id}` | Returns one incident |
+| GET | `/incidents/{incident_id}/evidence` | Returns incident evidence and verification results |
+| POST | `/alerts/{alert_id}/explain` | Explains an existing alert; accepts the `use_llm` query parameter |
+| POST | `/ask` | Runs the current limited operational-question workflow |
+
+### Dashboard summary filters
+
+`GET /dashboard/summary` accepts these optional query parameters:
+
+- `system_type`: `HVAC`, `NETWORKING`, `ACCESS_CONTROL`, `CCTV`, or `FIRE_ALARM`.
+- `building_id`: a seeded building ID.
+- `start_time` and `end_time`: UTC timestamps in `YYYY-MM-DDTHH:MM:SSZ` format.
+
+The selected time interval is start-inclusive and end-exclusive. The dashboard logic rejects ranges longer than 31 days.
+
+### Ask the current assistant
+
+Example request:
+
+```bash
+curl -X POST http://localhost:8000/ask \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "Why is CRAC 1 temperature high?",
+    "use_llm": false
+  }'
+```
+
+The current `/ask` route is a limited demonstration, not a general-purpose assistant. It accepts questions containing terms such as `crac`, `temperature`, `hvac`, or `cooling`. Other domains return HTTP 501. The route runs detection and selects the latest `HVAC_HIGH_TEMP` alert before producing the response.
+
+To request the local model through this endpoint, set `use_llm` to `true`:
+
+```json
+{
+  "question": "Why is CRAC 1 temperature high?",
+  "use_llm": true
+}
+```
+
+The alert explanation endpoint can also request the model:
+
+```text
+POST /alerts/{alert_id}/explain?use_llm=true
+```
+
+If Ollama is unavailable, the explanation pipeline can return a deterministic fallback built from the stored evidence and playbook rules.
+
+### Understanding the explanation status
+
+The successful status used by the current validator is `grounding_supported`, not `validated`. It means that the implemented grounding checks passed: citations, numbers, dates/times, evidence references, supported causes, and approved playbook actions are checked against the stored evidence.
+
+It is **not** a semantic correctness guarantee. The project does not currently implement an independent semantic validation stage.
 
 ## Running the tests
 
-The pipeline tests build a throw-away database from the migrations, so the DB user must be allowed to `CREATE DATABASE`.
+Run the offline tests:
 
 ```bash
-docker compose run --rm -e PGHOST=db api python day2_ahmed/test_day2_integration.py
-docker compose run --rm -e PGHOST=db api python day2_ahmed/test_day2_ahmed.py
+python day2_ahmed/test_day2_ahmed.py
 ```
 
-Without Docker:
+Run the PostgreSQL integration tests:
 
 ```bash
-pip install -r requirements.txt psycopg2-binary
-export PGHOST=localhost PGUSER=postgres PGPASSWORD=...
 python day2_ahmed/test_day2_integration.py
 ```
 
-Last results are in `day2_ahmed/TEST_RESULTS_DAY2.txt`.
+The integration test creates a temporary test database, so the PostgreSQL user configured through `PGHOST`, `PGPORT`, `PGUSER`, and `PGPASSWORD` must have permission to create databases.
 
-## Running detection manually
+The last committed output in `day2_ahmed/TEST_RESULTS_DAY2.txt` records:
 
-```bash
-python -c "import pipeline, psycopg2, psycopg2.extras as x; \
-c = psycopg2.connect('<dsn>', cursor_factory=x.RealDictCursor); cur = c.cursor(); \
-print(pipeline.detect(cur)); c.commit()"
-```
+| Test group | Recorded result |
+|---|---:|
+| Offline tests | 25/25 passed |
+| PostgreSQL integration tests | 43/43 passed |
 
-Run it from `day2_ahmed/`. Re-running detection creates no duplicate alerts or incidents.
+These are the results recorded in the repository's test-output file; they are not a claim that the tests were rerun as part of this README update.
 
-## Key design decisions
+`python test_dashboard.py` is a manual dashboard/database smoke script that prints the summary; it is not an automated assertion-based test suite.
 
-- **PostgreSQL** is the single data platform, with one data-access layer.
-- **Alerts and incidents are separate:** an alert is a detection; an incident groups alerts of the same location within 15 minutes and has a lifecycle (open → acknowledged → resolved).
-- **Verifiable evidence:** every evidence row points to a real stored record and is re-checked against the fact tables.
-- **Validation:** an explanation is rejected if it invents a reading, a cause or an action outside the playbook.
-- **Safe fallback:** if Ollama is unreachable, a deterministic, validated answer is returned with the limitation stated.
+## Important implementation boundaries and known limitations
 
-Details: `docs/ARCHITECTURE.md`, `DATA_MODEL.md`, `DECISION_MATRIX.md`, `docs/API_CONTRACT.md`.
+- **Simulated data only:** this branch does not connect to live building devices or external building-management systems.
+- **Limited assistant scope:** `/ask` currently routes only HVAC/CRAC/temperature/cooling questions.
+- **No ingestion HTTP routes in this build:** the `/api/v1/telemetry/batch` and `/api/v1/events/batch` routes described in the API design document are not exposed by the current `App.py`.
+- **Dashboard UI scope:** the current static page shows the ask interface and incidents. The KPI calculations are exposed through dashboard API routes but are not rendered as a full KPI dashboard in that page.
+- **Ollama is opt-in for requests:** the browser page explicitly sends `use_llm: false`. The API can request the model with `use_llm: true`.
+- **Model default differs by execution mode:** Docker Compose defaults to `qwen2.5:3b`; `day2_ahmed/ai_explainer.py` has a `qwen2.5:7b` code default when `OLLAMA_MODEL` is not supplied. Set `OLLAMA_MODEL` explicitly for non-Compose runs.
+- **Grounding, not semantic validation:** the validator verifies evidence references and playbook grounding. It does not independently prove that an explanation's reasoning is semantically correct.
+- **Bandwidth unit mismatch:** `bandwidth_util` is seeded/stored as a percentage, while some alert thresholds and rule logic are expressed in Mbps. Bandwidth-related detections and cause classification are therefore limited until the units are reconciled.
+- **Incomplete diagnostic signals:** the current seed does not provide fan state, filter state, battery state, motion, or access-granted details. Recommendations that depend on those signals cannot be produced from this dataset.
+- **Access-denial reasons are absent:** denial events do not contain a reason, so related explanations can correctly report partial data sufficiency.
+- **Playbook approver values are placeholders:** the current playbooks use the placeholder approver `Ahmed (Day 2 playbook owner)`. These actions need real engineering review and approval before operational use.
+- **No authentication or authorization:** the API, database, and Ollama ports are exposed by the local Compose configuration. Do not expose this demo to an untrusted network.
+- **UI validation badge mismatch:** the static page styles only the literal status `validated` as successful, while the API returns `grounding_supported`; the badge styling can therefore be misleading.
 
-## Team workflow
+## Design and handover documents
 
-| Rule | Detail |
-|---|---|
-| `main` | Always starts and passes tests. Changes go in through pull requests. |
-| Feature branches | `feat/<module>-<owner>`, short-lived (e.g. `feat/alert-engine-ahmed`). |
-| Reviews | The other engineer reviews every pull request. |
-| Commits | Small, one concern each. |
-| Database changes | Always a new numbered migration (`004_...sql`), never an edit of an applied one. |
-| Secrets | `.env` is git-ignored. Never commit it. |
+- [Architecture](docs/ARCHITECTURE.md)
+- [Data model](DATA_MODEL.md)
+- [Decision matrix](DECISION_MATRIX.md)
+- [API contract](docs/API_CONTRACT.md)
+- [Integration plan](docs/INTEGRATION_PLAN.md)
+- [Day 2 pipeline handover](day2_ahmed/DAY2_AHMED_HANDOVER.md)
+- [Recorded test results](day2_ahmed/TEST_RESULTS_DAY2.txt)
 
-Before starting work: `git pull origin main`.
-
-## Known limitations and scope notes
-
-1. **Ollama model download:** the Ollama integration is implemented, but the `qwen2.5:7b` model has not yet been downloaded in the current environment. Until it is available, the platform uses the validated deterministic fallback.
-2. **HVAC fault events:** `hvac_fault` / `hvac_recovered` events are stored in the database. Mapping them to an alert rule (to escalate severity) is a planned refinement.
-3. **Available data:** the simulated dataset does not include fan state, filter fault, battery, motion or access_granted signals, so related recommendations stay general.
-4. **Bandwidth thresholds:** `bandwidth_util` is stored in %, while the bandwidth rule thresholds are defined in Mbps. Percentage-based thresholds are planned.
-5. **Access denials:** denial events carry no stored reason, so these explanations are marked `partial` data sufficiency, which is the intended behaviour.
-6. **Seed alerts:** the five sample alerts in the seed file are illustrative; the alert engine generates the alerts used by the workflow.
-7. **Validation scope:** validation checks grounding (values, citations, playbook membership). Semantic validation is outside the Day 2 scope.
-8. **Incident lifecycle:** a resolved incident is final; a later fault opens a new incident.
-9. **Evidence size:** each alert lists up to 10 events (first, last and peak always included), and any omitted events are disclosed in `limitations`.
-10. **Database drivers:** `day2_ahmed/` uses `psycopg2` and `app/` uses `psycopg` v3. Unifying them is a planned cleanup.
+Some supporting documents describe target or proposed behavior rather than the routes currently exposed by the application. In particular, `docs/API_CONTRACT.md` describes a proposed `/api/v1` interface; use the **Current HTTP API** section above and `App.py` as the source of truth for the present implementation.
 
 ## Authors
 
-Ahmed and Amr – Anzma Tech.
+Anzma Tech project by Amr and Ahmed.
