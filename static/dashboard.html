@@ -444,7 +444,7 @@
           status === "OK"
             ? "Operational"
             : status === "UNKNOWN"
-              ? "No data"
+              ? "Unknown"
               : status.charAt(0) + status.slice(1).toLowerCase();
 
         button.innerHTML = `
@@ -458,7 +458,7 @@
           ${esc(system.assets)} assets:
           ${esc(system.ok)} ok,
           ${esc(system.warning)} warning,
-          ${esc(system.critical)} critical${system.no_data ? ", " + esc(system.no_data) + " no data" : ""}
+          ${esc(system.critical)} critical${system.no_data ? ", " + esc(system.no_data) + " no data" : ""}${system.unknown ? ", " + esc(system.unknown) + " unknown" : ""}
         </small>
       `;
 
@@ -599,6 +599,9 @@
       ];
       if (rows.some(s => s.no_data)) {
         sets.push({ label: "No data", data: rows.map(s => s.no_data || 0), backgroundColor: "#98a2b3" });
+      }
+      if (rows.some(s => s.unknown)) {
+        sets.push({ label: "Unknown", data: rows.map(s => s.unknown || 0), backgroundColor: "#64748b" });
       }
       chart(
         "c-top",

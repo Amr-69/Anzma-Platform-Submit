@@ -43,7 +43,10 @@ BANDWIDTH_METRIC = "bandwidth_util"
 
 
 
-STATUS_ORDER = ["critical", "no_data", "warning", "normal"]
+STATUS_ORDER = ["critical", "no_data", "warning", "unknown", "normal"]
+
+FAULT_RECOVERY_PAIRS = (("hvac_fault", "hvac_recovered"), ("fire_alarm_triggered", "alarm_cleared"),
+                        ("link_down", "link_up"), ("camera_offline", "camera_online"))
 
 
 
@@ -79,10 +82,11 @@ KPI_DEFINITIONS = {
         "source": "assets, telemetry_records, event_records",
         "definition": (
             "Assets with status Normal divided by monitored assets, times 100. "
-            "Status rules: Critical = at least one critical event in the period; "
+            "Status rules: Critical = a critical fault still active at the end of the period or an "
+            "unrecoverable critical point event in the period; "
             "No data = the asset normally sends telemetry or heartbeats but sent "
-            "none in the period; Warning = at least one warning event; "
-            "otherwise Normal."
+            "none in the period; Unknown = the asset has never sent telemetry or an event; "
+            "Warning = at least one warning event or no data in the period; otherwise Normal."
         ),
     },
     "alerts_raised": {
@@ -434,27 +438,46 @@ def _asset_status_counts(conn, params):
 
 
     Priority:
-    1. critical: at least one critical event in period
-    2. no_data: normally sends telemetry or heartbeats, but sent none in period
+    1. critical: a critical fault is still active at the end of the selected window, or an
+       unrecoverable critical point event occurred in the window
+    2. no_data: the asset has reported before but has no telemetry or heartbeat in period
     3. warning: at least one warning event in period
-    4. normal: everything else
+    4. unknown: no telemetry or event has ever been recorded for the asset
+    5. normal: everything else
     """
 
 
 
+    pair_values = ", ".join("('%s', '%s')" % pair for pair in FAULT_RECOVERY_PAIRS)
+    paired_event_types = [event_type for pair in FAULT_RECOVERY_PAIRS for event_type in pair]
     rows = conn.execute(
         SCOPE_CTE
         + """
-        , event_stats AS (
+        , fault_pairs(fault_type, recovery_type) AS (VALUES """ + pair_values + """)
+        , latest_fault_state AS (
+            SELECT DISTINCT ON (er.asset_id, fp.fault_type)
+                er.asset_id, fp.fault_type, et.name AS event_type, er.severity
+            FROM event_records AS er
+            JOIN event_types AS et ON et.event_type_id = er.event_type_id
+            JOIN fault_pairs AS fp ON et.name IN (fp.fault_type, fp.recovery_type)
+            WHERE er.ts < %(end)s
+            ORDER BY er.asset_id, fp.fault_type, er.ts DESC, er.event_id DESC
+        ), active_fault_stats AS (
+            SELECT asset_id,
+                   COUNT(*) FILTER (WHERE event_type = fault_type AND severity = 'critical') AS critical_count
+            FROM latest_fault_state
+            GROUP BY asset_id
+        ), event_stats AS (
             SELECT
                 er.asset_id,
                 COUNT(*) FILTER (
-                    WHERE er.severity = 'critical'
+                    WHERE er.severity = 'critical' AND et.name <> ALL(%(paired_types)s)
                 ) AS critical_count,
                 COUNT(*) FILTER (
                     WHERE er.severity = 'warning'
                 ) AS warning_count
             FROM event_records AS er
+            JOIN event_types AS et ON et.event_type_id = er.event_type_id
             WHERE er.ts >= %(start)s
               AND er.ts < %(end)s
             GROUP BY er.asset_id
@@ -482,12 +505,12 @@ def _asset_status_counts(conn, params):
         )
         SELECT
             s.asset_id,
-            COALESCE(e.critical_count, 0) AS critical_count,
+            COALESCE(e.critical_count, 0) + COALESCE(af.critical_count, 0) AS critical_count,
             COALESCE(e.warning_count, 0) AS warning_count,
             COALESCE(t.telemetry_count, 0) AS telemetry_count,
             COALESCE(h.heartbeat_count, 0) AS heartbeat_count,
             CASE
-                WHEN COALESCE(e.critical_count, 0) > 0 THEN 'critical'
+                WHEN COALESCE(e.critical_count, 0) + COALESCE(af.critical_count, 0) > 0 THEN 'critical'
                 WHEN COALESCE(t.telemetry_count, 0) = 0
                  AND COALESCE(h.heartbeat_count, 0) = 0
                  AND (
@@ -499,22 +522,25 @@ def _asset_status_counts(conn, params):
                      OR EXISTS (
                          SELECT 1
                          FROM event_records AS old_e
-                         JOIN event_types AS old_et
-                           ON old_et.event_type_id = old_e.event_type_id
                          WHERE old_e.asset_id = s.asset_id
-                           AND old_et.name = 'heartbeat'
                      )
                  )
                 THEN 'no_data'
                 WHEN COALESCE(e.warning_count, 0) > 0 THEN 'warning'
+                WHEN NOT EXISTS (
+                    SELECT 1 FROM telemetry_records AS ever_t WHERE ever_t.asset_id = s.asset_id
+                    UNION ALL
+                    SELECT 1 FROM event_records AS ever_e WHERE ever_e.asset_id = s.asset_id
+                ) THEN 'unknown'
                 ELSE 'normal'
             END AS status
         FROM scope AS s
         LEFT JOIN event_stats AS e ON e.asset_id = s.asset_id
+        LEFT JOIN active_fault_stats AS af ON af.asset_id = s.asset_id
         LEFT JOIN telemetry_stats AS t ON t.asset_id = s.asset_id
         LEFT JOIN heartbeat_stats AS h ON h.asset_id = s.asset_id
         """,
-        params,
+        dict(params, paired_types=paired_event_types),
     ).fetchall()
 
 

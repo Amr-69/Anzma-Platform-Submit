@@ -33,12 +33,14 @@ try:
     import db_adapter as da
     import evidence
     import validation as val
+    import alert_config as alert_cfg
 except Exception:  # pragma: no cover - fallback if a submodule is unavailable in a minimal env
     recs = None
     pipeline = None
     da = None
     evidence = None
     val = None
+    alert_cfg = None
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b-instruct")
@@ -444,56 +446,67 @@ def _incident_list(cur, body, lang):
 
 def _hvac_temp_higher_fallback(cur, body, lang):
     sql = """
-        SELECT a.asset_id, a.name AS asset_name, m.name AS metric_name, t.ts, t.value
+        SELECT a.asset_id, a.name AS asset_name, l.name AS zone, st.code AS system,
+               m.name AS metric_name, t.ts, t.value
         FROM telemetry_records t
         JOIN metric_types m ON m.metric_id = t.metric_id
         JOIN assets a ON a.asset_id = t.asset_id
-        WHERE a.name = 'CRAC Unit 1' AND m.name = 'temperature'
-        ORDER BY t.ts DESC
-        LIMIT 5
+        JOIN locations l ON l.location_id = a.location_id
+        JOIN system_types st ON st.system_type_id = a.system_type_id
+        WHERE st.code = 'HVAC' AND a.name ILIKE %s AND m.name = 'temperature'
+        ORDER BY t.ts DESC, t.telemetry_id DESC
+        LIMIT 1
     """
-    temp_rows = _run_readonly_sql(cur, sql)
-    threshold = 29.0
+    temp_rows = _run_readonly_sql(cur, sql, ("%crac%",))
     alert_sql = """
         SELECT alert_id, severity, title, first_ts, last_ts, asset_id
         FROM alerts
-        WHERE asset_id = (SELECT asset_id FROM assets WHERE name = 'CRAC Unit 1')
-          AND rule_id = 'HVAC_HIGH_TEMP'
+        WHERE asset_id = %s AND rule_id = 'HVAC_HIGH_TEMP'
         ORDER BY detected_ts DESC
         LIMIT 1
     """
-    alert_rows = _run_readonly_sql(cur, alert_sql)
     if not temp_rows:
         return _reply(
-            "I could not find CRAC temperature data in the database, so I cannot verify why it is high." if lang == "en" else "لم أجد بيانات درجة حرارة CRAC في قاعدة البيانات، لذلك لا أستطيع التحقق من سبب ارتفاعها.",
+            "I could not find temperature readings for a CRAC asset, so I cannot verify whether it is high." if lang == "en" else "لم أجد قراءات حرارة لوحدة CRAC، لذلك لا أستطيع التحقق مما إذا كانت مرتفعة.",
             lang,
             "FALLBACK",
             False,
-            sources=[{"ref": "F1", "text": "verified in database: no CRAC temperature telemetry rows"}],
+            sources=[{"ref": "F1", "text": f"verified in database: {sql}; result=0 rows"}],
             sufficient=False,
         )
 
     latest = temp_rows[0]
     latest_temp = float(latest["value"])
+    if alert_cfg is None:
+        return _reply("The configured HVAC temperature rule is unavailable, so I cannot validate a threshold." if lang == "en" else "قاعدة حد حرارة التكييف غير متاحة، لذلك لا أستطيع التحقق من الحد.",
+                       lang, "FALLBACK", False,
+                       sources=[{"ref": "F1", "text": f"verified in database: {sql}; latest reading={latest_temp} at {latest['ts']}"}],
+                       sufficient=False)
+    threshold_key = "server_temp_warn" if latest["zone"] == "Server Room" else "hvac_temp_warn"
+    threshold = float(alert_cfg.T[threshold_key])
+    alert_rows = _run_readonly_sql(cur, alert_sql, (latest["asset_id"],))
     alert = alert_rows[0] if alert_rows else None
     high = latest_temp > threshold
     passed = _grounding_compute(True, rows=temp_rows)
+    asset_name = latest["asset_name"]
     answer = (
-        f"CRAC Unit 1 temperature is high because the latest reading was {latest_temp:.2f}C at {latest['ts']} [F1]."
+        f"{asset_name} temperature is above its configured {threshold:g}C warning threshold: the latest reading was {latest_temp:.2f}C at {latest['ts']} [F1]."
         if high and lang == "en" else (
-            f"CRAC Unit 1 temperature is not above the threshold: latest reading {latest_temp:.2f}C at {latest['ts']} [F1]."
+            f"{asset_name} temperature is not above its configured {threshold:g}C warning threshold: latest reading {latest_temp:.2f}C at {latest['ts']} [F1]."
             if not high and lang == "en" else (
-                f"حرارة CRAC Unit 1 مرتفعة لأن آخر قراءة كانت {latest_temp:.2f}C في {latest['ts']} [F1]."
-                if high else f"حرارة CRAC Unit 1 ليست أعلى من الحد: آخر قراءة {latest_temp:.2f}C في {latest['ts']} [F1]."
+                f"حرارة {asset_name} أعلى من حد التحذير المهيأ {threshold:g}C: آخر قراءة {latest_temp:.2f}C في {latest['ts']} [F1]."
+                if high else f"حرارة {asset_name} ليست أعلى من حد التحذير المهيأ {threshold:g}C: آخر قراءة {latest_temp:.2f}C في {latest['ts']} [F1]."
             )
         )
     )
     if alert is not None and high:
         answer += (" The HVAC_HIGH_TEMP alert was raised at " if lang == "en" else " وتم إنشاء تنبيه HVAC_HIGH_TEMP في ") + f"{alert['first_ts']} [F2]."
-    sources = [{"ref": "F1", "text": f"verified in database: {sql}; latest_temp={latest_temp:.2f}C at {latest['ts']}"}]
+    sources = [{"ref": "F1", "text": f"verified in database: {sql}; latest_temp={latest_temp:.2f}C at {latest['ts']}; "
+                                         f"configured {threshold_key}={threshold:g}C from alert_config.T"}]
     if alert is not None:
         sources.append({"ref": "F2", "text": f"verified in database: {alert_sql}; title={alert['title']} | first_ts={alert['first_ts']}"})
-    extra = {"count": 1, "session_state": {"last_alert_id": alert['alert_id'] if alert else None}}
+    extra = {"count": 1, "asset_name": asset_name, "threshold": threshold,
+             "session_state": {"last_alert_id": alert['alert_id'] if alert else None}}
     if alert is not None and alert['alert_id']:
         extra['alert_id'] = int(alert['alert_id'])
     return _reply(answer, lang, "FALLBACK", passed, sources, hours=body.hours, extra=extra)

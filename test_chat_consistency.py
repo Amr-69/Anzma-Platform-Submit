@@ -15,7 +15,7 @@ HOURS = 24
 CJK = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
 LABEL = {"HVAC": "HVAC", "NETWORK": "Network", "ACCESS": "Access control", "CCTV": "CCTV", "FIRE_ALARM": "Fire alarm"}
 WORD = {"OK": "Operational", "WARNING": "Warning", "CRITICAL": "Critical", "UNKNOWN": "Unknown"}
-COUNTS = r"(\d+) assets: (\d+) ok, (\d+) warning, (\d+) critical, (\d+) no data"
+COUNTS = r"(\d+) assets: (\d+) ok, (\d+) warning, (\d+) critical, (\d+) no data, (\d+) unknown"
 
 results = []
 
@@ -31,21 +31,22 @@ def get(path):
 
 
 def ask(message):
-    req = urllib.request.Request(BASE + "/chat", data=json.dumps({"message": message, "hours": HOURS}).encode(),
+    req = urllib.request.Request(BASE + "/chat", data=json.dumps({"message": message, "hours": HOURS,
+                                                                  "use_llm": False}).encode(),
                                  headers={"Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(req, timeout=180) as r:
         return json.load(r)
 
 
 def counts_of(system):
-    return (system["assets"], system["ok"], system["warning"], system["critical"], system["no_data"])
+    return (system["assets"], system["ok"], system["warning"], system["critical"], system["no_data"], system["unknown"])
 
 
 def parse(answer, label, dash):
     """Return (status word, counts tuple) for `label` from a chat answer, or (None, None)."""
     m = re.search(rf"{re.escape(label)}: (\w+)(?: -|) \(?{COUNTS}", answer) or \
         re.search(rf"{re.escape(label)}: (\w+) - {COUNTS}", answer)
-    return (m.group(1), tuple(int(x) for x in m.groups()[1:6])) if m else (None, None)
+    return (m.group(1), tuple(int(x) for x in m.groups()[1:7])) if m else (None, None)
 
 
 def main():
@@ -74,6 +75,15 @@ def main():
           f"chat={m.groups() if m else None} dashboard={kp['value']}, {kp.get('sub')}")
     check("status: active vs recovered is reported", "Active faults now:" in a)
 
+    # Critical-alert count has one definition: critical event records in the dashboard's selected window.
+    critical_kpi = next(k for k in ov["kpis"] if k["key"] == "critical_alerts")
+    critical_chat = ask("How many critical alerts are in the selected window?")
+    m = re.search(r"There are (\d+) critical alerts", critical_chat["answer"])
+    check("critical alerts in chat equal the dashboard KPI and use database grounding",
+          critical_chat["source"] == "DATABASE" and critical_chat["grounding"]["passed"] and bool(m) and
+          int(m.group(1)) == critical_kpi["value"],
+          f"chat={m.group(1) if m else critical_chat['answer'][:100]} dashboard={critical_kpi['value']}")
+
     # 2. per-system reports must equal the same tiles
     for typ, question in (("NETWORK", "Are there any network issues?"), ("ACCESS", "How is access control doing?"),
                           ("HVAC", "How is the HVAC doing?"), ("FIRE_ALARM", "What is the fire alarm status?")):
@@ -89,7 +99,7 @@ def main():
     check("CCTV: camera total equals the dashboard asset count", bool(m) and int(m.group(3)) == cc["assets"],
           r["answer"][:120])
     check("CCTV: cameras with no data are not counted as available",
-          bool(m) and int(m.group(2)) <= cc["assets"] - cc["no_data"], r["answer"][:120])
+          bool(m) and int(m.group(2)) <= cc["assets"] - cc["no_data"] - cc["unknown"], r["answer"][:120])
     check("CCTV: percentage matches the counts", bool(m) and abs(float(m.group(1)) - 100 * int(m.group(2)) / int(m.group(3))) < 0.06)
 
     # 4. the other demo questions answer from the database and cite their queries

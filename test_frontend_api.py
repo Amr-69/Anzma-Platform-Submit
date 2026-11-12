@@ -6,6 +6,7 @@ Run:  PGHOST=localhost PGUSER=postgres PGPASSWORD=... python test_frontend_api.p
 """
 import os
 import sys
+from datetime import timedelta
 
 TEST_DB = "anzma_api_test"
 HOST, PORT = os.getenv("PGHOST", "localhost"), os.getenv("PGPORT", "5432")
@@ -70,7 +71,7 @@ def _():
     d = r.json()
     assert {"from", "to", "hours", "as_of"} <= set(d["window"])
     assert [s["type"] for s in d["systems"]] == ["HVAC", "NETWORK", "ACCESS", "CCTV", "FIRE_ALARM"]
-    assert all({"type", "status", "assets", "ok", "warning", "critical"} <= set(s) for s in d["systems"])
+    assert all({"type", "status", "assets", "ok", "warning", "critical", "no_data", "unknown"} <= set(s) for s in d["systems"])
     assert {s["status"] for s in d["systems"]} <= {"OK", "WARNING", "CRITICAL", "UNKNOWN"}
     assert sum(s["assets"] for s in d["systems"]) == one("SELECT count(*) AS n FROM assets")["n"]
     keys = {k["key"] for k in d["kpis"]}
@@ -141,14 +142,45 @@ def _():
     need = {"name", "system_type", "building", "floor", "zone", "status", "reason", "events", "faults", "warnings",
             "criticals", "last_seen"}
     assert all(need <= set(i) for i in d["items"])
-    rank = {"CRITICAL": 0, "WARNING": 1, "OK": 2}
+    rank = {"CRITICAL": 0, "WARNING": 1, "UNKNOWN": 2, "OK": 3}
     assert [rank[i["status"]] for i in d["items"]] == sorted(rank[i["status"]] for i in d["items"])
     crac = next(i for i in d["items"] if i["name"] == "CRAC Unit 1")
-    assert crac["status"] == "CRITICAL" and crac["criticals"] >= 1 and crac["faults"] >= 1
+    assert crac["status"] != "CRITICAL" and crac["active_criticals"] == 0
+    assert crac["criticals"] >= 1 and crac["faults"] >= 1  # recovered event remains visible as history
     healthy = next(i for i in d["items"] if i["name"] == "Lobby Camera")
     assert healthy["status"] == "OK" and healthy["last_seen"]
     only = client.get("/dashboard/equipment-health", params={"hours": 72, "system_type": "CCTV"}).json()
     assert {i["system_type"] for i in only["items"]} == {"CCTV"} and len(only["items"]) == 2
+
+
+@test("status semantics: never-reported assets are Unknown; stale previously reported assets are Warning")
+def _():
+    anchor = one("SELECT max(ts) AS t FROM (SELECT ts FROM telemetry_records UNION ALL SELECT ts FROM event_records) u")["t"]
+    location_id = one("SELECT location_id FROM locations ORDER BY location_id LIMIT 1")["location_id"]
+    system_id = one("SELECT system_type_id FROM system_types WHERE code='HVAC'")["system_type_id"]
+    never_id = one("""INSERT INTO assets (asset_code,name,asset_type,system_type_id,location_id)
+                       VALUES ('TEST-UNKNOWN','Never Reported Test Asset','sensor',%s,%s) RETURNING asset_id""",
+                   system_id, location_id)["asset_id"]
+    stale_id = one("""INSERT INTO assets (asset_code,name,asset_type,system_type_id,location_id)
+                      VALUES ('TEST-STALE','Stale Test Asset','sensor',%s,%s) RETURNING asset_id""",
+                   system_id, location_id)["asset_id"]
+    try:
+        metric_id = one("SELECT metric_id FROM metric_types WHERE name='temperature'")["metric_id"]
+        DB.execute("INSERT INTO telemetry_records (asset_id,metric_id,ts,value) VALUES (%s,%s,%s,%s)",
+                   (stale_id, metric_id, anchor - timedelta(hours=2), 22.0))
+        d = client.get("/dashboard/equipment-health", params={"hours": 1, "system_type": "HVAC"}).json()
+        by_name = {item["name"]: item for item in d["items"]}
+        assert by_name["Never Reported Test Asset"]["status"] == "UNKNOWN"
+        assert by_name["Stale Test Asset"]["status"] == "WARNING"
+        overview = client.get("/dashboard/overview", params={"hours": 1}).json()
+        hvac = next(system for system in overview["systems"] if system["type"] == "HVAC")
+        assert hvac["unknown"] >= 1 and hvac["no_data"] >= 1 and hvac["status"] != "OK"
+        chat = client.post("/chat", json={"message": "What is the current building status?", "hours": 1,
+                                          "use_llm": False}).json()
+        assert chat["source"] == "DATABASE" and "1 unknown" in chat["answer"]
+    finally:
+        DB.execute("DELETE FROM telemetry_records WHERE asset_id = ANY(%s)", ([stale_id, never_id],))
+        DB.execute("DELETE FROM assets WHERE asset_id = ANY(%s)", ([stale_id, never_id],))
 
 
 @test("GET /alerts: stored alerts, newest first, UI names and upper-case enums; filters work")
@@ -228,9 +260,18 @@ def _():
     hv = client.post("/chat", json={"message": "Why is CRAC 1 temperature high?", "use_llm": False}).json()
     assert hv["source"] == "FALLBACK" and hv["grounding"]["passed"] is True and hv["sources"]
     assert all("verified in database" in s["text"] for s in hv["sources"]) and "[F1]" in hv["answer"]
-    inc = client.post("/chat", json={"message": "What is wrong with the building?"}).json()
+    from alert_config import T
+    latest_crac = one("""SELECT a.name, l.name AS zone FROM telemetry_records t
+                        JOIN assets a USING (asset_id) JOIN locations l USING (location_id)
+                        JOIN metric_types m USING (metric_id) JOIN system_types st USING (system_type_id)
+                        WHERE st.code='HVAC' AND a.name ILIKE %s AND m.name='temperature'
+                        ORDER BY t.ts DESC, t.telemetry_id DESC LIMIT 1""", "%crac%")
+    configured_threshold = T["server_temp_warn"] if latest_crac["zone"] == "Server Room" else T["hvac_temp_warn"]
+    assert latest_crac["name"] in hv["answer"] and f"{configured_threshold:g}C" in hv["answer"]
+    assert "configured" in hv["answer"] and "hardcoded" not in hv["answer"].lower()
+    inc = client.post("/chat", json={"message": "What is wrong with the building?", "use_llm": False}).json()
     assert inc["answer"].startswith("Open incidents") and "CRAC" in inc["answer"]
-    other = client.post("/chat", json={"message": "tell me a joke please"}).json()
+    other = client.post("/chat", json={"message": "tell me a joke please", "use_llm": False}).json()
     assert other["source"] == "RULES" and other["grounding"]["passed"] is False
     assert client.post("/chat", json={"message": "x"}).status_code == 422
 

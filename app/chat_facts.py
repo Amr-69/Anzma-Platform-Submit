@@ -35,6 +35,9 @@ def _has(low, *words):
 
 
 def _intent(low):
+    if _has(low, "critical alerts", "critical alert", "critical fault count", "critical faults",
+            "تنبيهات حرجة", "تنبيه حرج", "الأعطال الحرجة", "اعطال حرجة"):
+        return "critical_alerts"
     if _has(low, "building status", "حالة المبنى", "حالة المبني", "وضع المبنى"):
         return "status"
     if _has(low, "cctv") and _has(low, "availab", "percent", "%", "توفر", "نسبة"):
@@ -79,11 +82,11 @@ def _label(code, lang):
 
 
 def _status_word(n, c, lang):
-    if n == 0 or c["no_data"] == n:
+    if n == 0 or c["unknown"] == n:
         return _tr(lang, "Unknown", "غير معروف")
     if c["critical"]:
         return _tr(lang, "Critical", "حرج")
-    if c["warning"] or c["no_data"]:
+    if c["warning"] or c["no_data"] or c["unknown"]:
         return _tr(lang, "Warning", "تحذير")
     return _tr(lang, "Operational", "يعمل")
 
@@ -148,8 +151,8 @@ def _status(conn, lang, hours, p, last):
         c = core._asset_status_counts(conn, params)
         word = _status_word(n, c, lang)
         detail = _tr(lang,
-                     f"{n} assets: {c['normal']} ok, {c['warning']} warning, {c['critical']} critical, {c['no_data']} no data",
-                     f"{n} أصول: {c['normal']} سليم، {c['warning']} تحذير، {c['critical']} حرج، {c['no_data']} بلا بيانات")
+                     f"{n} assets: {c['normal']} ok, {c['warning']} warning, {c['critical']} critical, {c['no_data']} no data, {c['unknown']} unknown",
+                     f"{n} أصول: {c['normal']} سليم، {c['warning']} تحذير، {c['critical']} حرج، {c['no_data']} بلا بيانات، {c['unknown']} غير معروف")
         lines.append(f"- {_label(code, lang)}: {word} ({detail}) [Q{i}]")
         srcs.append({"ref": f"Q{i}", "text": f"Dashboard status counts for {code}: {detail}"})
     inc = conn.execute("""SELECT count(*) FILTER (WHERE status <> 'resolved') AS open_n,
@@ -270,9 +273,9 @@ def _system(conn, lang, hours, p, last, code):
         WHERE st.code = %(system)s AND i.status <> 'resolved'
         ORDER BY i.last_ts DESC LIMIT 6""", {"system": code}).fetchall()
     lines = [_tr(lang, f"{name}: {_status_word(n, c, lang)} - {n} assets: {c['normal']} ok, {c['warning']} warning, "
-                       f"{c['critical']} critical, {c['no_data']} no data (last {hours} h, until {_t(last)}) [Q1]",
+                       f"{c['critical']} critical, {c['no_data']} no data, {c['unknown']} unknown (last {hours} h, until {_t(last)}) [Q1]",
                  f"{name}: {_status_word(n, c, lang)} - {n} أصول: {c['normal']} سليم، {c['warning']} تحذير، "
-                 f"{c['critical']} حرج، {c['no_data']} بلا بيانات (آخر {hours} ساعة حتى {_t(last)}) [Q1]")]
+                 f"{c['critical']} حرج، {c['no_data']} بلا بيانات، {c['unknown']} غير معروف (آخر {hours} ساعة حتى {_t(last)}) [Q1]")]
     if ev:
         lines.append(_tr(lang, "Events in the window (excluding heartbeats):", "الأحداث في الفترة (بدون heartbeat):"))
         lines += [f"- {r['event_type']} · {r['severity']} · x{r['n']} · {_t(r['last_ts'])} [Q2]" for r in ev]
@@ -352,7 +355,19 @@ def _energy(conn, lang, hours, p, last):
                 f"{prev:.2f} في الـ {hours} ساعة السابقة - {direction} {abs(change)}% [Q1]."), [src])
 
 
-HANDLERS = {"status": _status, "faults": _faults, "cctv": _cctv, "repair": _repair, "energy": _energy}
+def _critical_alerts(conn, lang, hours, p, last):
+    """Use the dashboard's shared event-record count for critical alerts."""
+    counts = core._alert_counts(conn, {"system": None, "building": None, "start": p[0], "end": p[1]})
+    count = counts["critical_alerts"]
+    src = {"ref": "Q1", "text": f"Dashboard KPI query: COUNT(event_records) WHERE severity='critical' "
+                                  f"and {p[0].isoformat()} <= ts < {p[1].isoformat()} -> {count}"}
+    return (_tr(lang,
+                f"There are {count} critical alerts in the selected {hours}-hour window, counted from critical event records [Q1].",
+                f"يوجد {count} تنبيهًا حرجًا في الفترة المحددة ({hours} ساعة)، محسوبًا من سجلات الأحداث الحرجة [Q1]."), [src])
+
+
+HANDLERS = {"status": _status, "faults": _faults, "cctv": _cctv, "repair": _repair, "energy": _energy,
+            "critical_alerts": _critical_alerts}
 
 
 def try_answer(message_low, lang, hours=None):

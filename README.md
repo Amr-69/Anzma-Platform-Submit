@@ -71,13 +71,13 @@ docker compose up -d --build
 
 ## Demo walkthrough (scenario S1: server-room cooling failure)
 
-1. **Dashboard:** the HVAC tile is Critical, and *Equipment health* lists CRAC Unit 1 as Critical.
+1. **Dashboard:** show the HVAC tile and CRAC Unit 1 in *Equipment health*. Status reflects the latest fault/recovery state; a recovered asset clears current Critical status, while its stored critical event and alert/incident history remain visible.
 2. **Trends:** the HVAC temperature chart shows the CRAC running about 9 °C above normal for 90 minutes.
 3. **Incidents:** open "HVAC temperature above threshold – CRAC Unit 1". The tag *Evidence verified in database 14 / 14* means every evidence row was re-read from `telemetry_records` and matched.
-4. **Explain:** click *Explain* on the alert. The answer shows its source (*Deterministic fallback* or *AI model*), *Grounding checks passed*, data sufficiency, limitations and the approved playbook actions. Tick *Use local AI model* to try Ollama.
-5. **Acknowledge / Resolve** the incident: its status changes and the *Open incidents* KPI updates.
-6. **Failure test:** run `docker compose stop ollama` and explain again. It is still answered, with `ai_source = fallback`.
-7. **Assistant widget:** ask "Why is CRAC 1 temperature high?" or "What is wrong with the building?" (English or Arabic).
+4. **Live model path:** ensure Ollama and the configured Qwen model are ready, tick *Use local AI model*, and click *Explain*. Record the source and model shown by the application. A timeout or fallback is not a live-model pass.
+5. **Fallback path:** untick *Use local AI model* and explain again, or stop Ollama and retry. Confirm the deterministic source, evidence verification, grounding result, limitations and playbook actions.
+6. **Acknowledge / Resolve** the incident: its incident lifecycle changes independently of the asset's physical recovery state.
+7. **Assistant widget:** ask "Why is CRAC 1 temperature high?" or "What is wrong with the building?" (English or Arabic), then compare status and critical counts with the dashboard.
 
 The data window ends at the latest stored record (`as_of`), not the wall clock, and the seed is relative to when it was loaded, so the CRAC fault appears about 20 hours before the latest record. More detail is in `RUN_DEMO.md`.
 
@@ -251,20 +251,24 @@ Anzma-Platform-Submit/
 
 `data-model.sql` is an earlier draft, not the schema the database is built from. The schema that runs is `db/init/anzma_schema_and_seed.sql`.
 
-## Test status
+## Verification status (2026-11-12)
 
-| Suite | Recorded result | Source |
+| Suite | Latest result | Notes |
 |---|---:|---|
-| Offline tests | 25/25 | Re-run while preparing this README |
-| PostgreSQL integration tests | 43/43 | `day2_ahmed/TEST_RESULTS_DAY2.txt`, not re-run |
-| Frontend API tests | 16 tests (per `RUN_DEMO.md`) | Not re-run |
+| Frontend API tests | **17/17 passed** | Docker run; includes fallback, recovered-asset status and explicit Unknown/no-data cases. See `TEST_RESULTS_FRONTEND_API.txt`. |
+| Chat/dashboard consistency | **31/31 passed** | Five systems, counts, labels, critical KPI, citations and status wording. See `TEST_RESULTS_CHAT_CONSISTENCY.txt`. |
+| Offline tests | 25/25 recorded | Previous recorded run; not rerun in this verification. |
+| PostgreSQL Day 2 integration tests | 43/43 recorded | Previous recorded run in `day2_ahmed/TEST_RESULTS_DAY2.txt`; not rerun in this verification. |
 
-`test_dashboard.py` is a manual smoke script that prints the KPI summary; it makes no assertions. Docker startup and Ollama were not exercised while preparing this README.
+The API image started with `uvicorn App:asgi_app`; `/`, `/dashboard`, static resources and `/health` passed. The integrated test output logged Ollama timeouts, so live Qwen inference has **not** been demonstrated as passing. The fallback path passed. The root cause of the earlier startup report cannot be established from the available historical logs.
+
+The repository is ready for the teammate to run from this folder with the intended `.env` and Compose setup. The recorded API tests used the local Compose PostgreSQL service.
 
 ## Known limitations
 
 - **Simulated data only.** No live devices or external building-management systems.
-- **Placeholder playbook approvers.** Every action lists "Ahmed (Day 2 playbook owner)" as approver (`DEFAULT_APPROVER` in `day2_ahmed/alert_config.py`). A real engineer must review and sign off the playbooks before any operational use.
+- **Playbook approval record.** Amr reports that the engineering owner approved the HVAC playbook. Confirm whether sign-off covers the other system playbooks before presenting their recommendations as approved.
+- **Live-model demonstration outstanding.** The current test run recorded Ollama timeouts. Capture a successful integrated Qwen run separately from fallback before claiming live inference passed.
 - **Bandwidth units.** `bandwidth_util` is stored as a percentage, but the bandwidth alert thresholds in `alert_config.py` (900 and 980) look like Mbps values. Treat bandwidth alerts as unreliable until the units are reconciled. The chart was relabelled to "utilisation (%)".
 - **API contract mismatch.** `docs/API_CONTRACT.md` and the submission document describe a proposed `/api/v1` interface (batch ingestion, `/api/v1/assistant/query`). It is **not implemented**. Use the HTTP API section above and `/docs` as the source of truth.
 - **No authentication.** The API, database and Ollama ports are published by Compose, and Socket.IO allows any origin. Do not expose the stack to an untrusted network.

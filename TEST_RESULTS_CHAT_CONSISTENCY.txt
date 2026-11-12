@@ -1,10 +1,12 @@
 Chat vs dashboard consistency test - http://localhost:8000 - window 24 h
+Execution date: 2026-11-12 (output supplied by Amr)
+Command: docker compose exec -T api python test_chat_consistency.py
 
 PASS  dashboard returns the five systems
 PASS  status answer comes from the database
 PASS  status answer has citations
 PASS  status: HVAC counts equal the dashboard tile
-PASS  status: HVAC status word equals dashboard (Warning)
+PASS  status: HVAC status word equals dashboard (Critical)
 PASS  status: Network counts equal the dashboard tile
 PASS  status: Network status word equals dashboard (Operational)
 PASS  status: Access control counts equal the dashboard tile
@@ -15,6 +17,7 @@ PASS  status: Fire alarm counts equal the dashboard tile
 PASS  status: Fire alarm status word equals dashboard (Critical)
 PASS  status: open incidents equal the dashboard KPI
 PASS  status: active vs recovered is reported
+PASS  critical alerts in chat equal the dashboard KPI and use database grounding
 PASS  Network report equals the dashboard tile
 PASS  Access control report equals the dashboard tile
 PASS  HVAC report equals the dashboard tile
@@ -31,4 +34,6 @@ PASS  no Chinese/Japanese/Korean text in the answer to: والاكسيس كون�
 PASS  no Chinese/Japanese/Korean text in the answer to: What is the current building status?
 PASS  no Chinese/Japanese/Korean text in the answer to: Why is it going wrong?
 
-30/30 checks passed
+31/31 checks passed
+
+Note: this confirms assistant/dashboard consistency for the checks above; it does not verify live Qwen inference.

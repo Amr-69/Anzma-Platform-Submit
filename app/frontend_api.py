@@ -111,16 +111,17 @@ def create_router(open_ro=core.open_readonly):
                     params = {"system": sys_code, "building": None, "start": start, "end": end}
                     n = core._monitored_assets(conn, params)
                     c = core._asset_status_counts(conn, params)
-                    if n == 0 or c["no_data"] == n:
+                    if n == 0 or c["unknown"] == n:
                         status = "UNKNOWN"
                     elif c["critical"]:
                         status = "CRITICAL"
-                    elif c["warning"] or c["no_data"]:
+                    elif c["warning"] or c["no_data"] or c["unknown"]:
                         status = "WARNING"
                     else:
                         status = "OK"
                     systems.append({"type": SYSTEM_TO_UI[sys_code], "status": status, "assets": n, "ok": c["normal"],
-                                    "warning": c["warning"], "critical": c["critical"], "no_data": c["no_data"]})
+                                    "warning": c["warning"], "critical": c["critical"], "no_data": c["no_data"],
+                                    "unknown": c["unknown"]})
 
                 summary = core.get_dashboard_summary(conn, system_type=code, start_time=core.format_ts(start),
                                                      end_time=core.format_ts(end))
@@ -135,7 +136,8 @@ def create_router(open_ro=core.open_readonly):
                 kpis = [
                     card("monitored_assets"),
                     card("healthy_assets_pct", f"{sc['normal']} normal, {sc['warning']} warning, "
-                                               f"{sc['critical']} critical, {sc['no_data']} no data"),
+                                               f"{sc['critical']} critical, {sc['no_data']} no data, "
+                                               f"{sc['unknown']} unknown"),
                     card("alerts_raised", "warning and critical events"),
                     card("critical_alerts"),
                     card("alert_rate_per_hour"),
@@ -217,7 +219,7 @@ def create_router(open_ro=core.open_readonly):
                     ORDER BY n DESC, a.name
                     LIMIT 10""", dict(p, skip=list(NOT_COUNTED_EVENTS))).fetchall()
                 top_assets = {"labels": [r["name"] for r in top_rows],
-                              "values": [r["n"] for r in top_rows]}        
+                              "values": [r["n"] for r in top_rows]}
                 has_granted = conn.execute("SELECT 1 FROM event_types WHERE name = 'access_granted'").fetchone()
         except core.NoDataError as exc:
             raise HTTPException(503, str(exc))
@@ -238,38 +240,53 @@ def create_router(open_ro=core.open_readonly):
         try:
             with open_ro() as conn:
                 start, end, last = _window(conn, hours)
-                rows = conn.execute("""
+                pair_values = ", ".join("('%s', '%s')" % pair for pair in core.FAULT_RECOVERY_PAIRS)
+                paired_event_types = [event_type for pair in core.FAULT_RECOVERY_PAIRS for event_type in pair]
+                rows = conn.execute(f"""
                     WITH scope AS (
                         SELECT a.asset_id, a.name, st.code AS system, b.name AS building, l.floor, l.name AS zone
                         FROM assets a JOIN system_types st USING (system_type_id)
                         JOIN locations l USING (location_id) JOIN buildings b USING (building_id)
                         WHERE (%(system)s::text IS NULL OR st.code = %(system)s::text)),
+                    fault_pairs(fault_type, recovery_type) AS (VALUES {pair_values}),
+                    latest_fault_state AS (
+                        SELECT DISTINCT ON (x.asset_id, fp.fault_type)
+                               x.asset_id, fp.fault_type, et.name AS event_type, x.severity
+                        FROM event_records x JOIN event_types et USING (event_type_id)
+                        JOIN fault_pairs fp ON et.name IN (fp.fault_type, fp.recovery_type)
+                        WHERE x.ts < %(end)s
+                        ORDER BY x.asset_id, fp.fault_type, x.ts DESC, x.event_id DESC),
+                    active_pair_criticals AS (
+                        SELECT asset_id, count(*) AS n FROM latest_fault_state
+                        WHERE event_type = fault_type AND severity = 'critical' GROUP BY asset_id),
                     ev AS (
                         SELECT x.asset_id,
                                count(*) FILTER (WHERE et.name <> ALL(%(skip)s)) AS events,
                                count(*) FILTER (WHERE et.name = ANY(%(faults)s)) AS faults,
                                count(*) FILTER (WHERE x.severity = 'warning') AS warnings,
                                count(*) FILTER (WHERE x.severity = 'critical') AS criticals,
+                               count(*) FILTER (WHERE x.severity = 'critical' AND et.name <> ALL(%(paired_types)s)) AS point_criticals,
                                count(*) FILTER (WHERE et.name = 'heartbeat') AS heartbeats
                         FROM event_records x JOIN event_types et USING (event_type_id)
                         WHERE x.ts >= %(start)s AND x.ts < %(end)s GROUP BY x.asset_id),
                     tel AS (SELECT asset_id, count(*) AS n FROM telemetry_records
                             WHERE ts >= %(start)s AND ts < %(end)s GROUP BY asset_id),
                     ever AS (SELECT asset_id FROM telemetry_records GROUP BY asset_id
-                             UNION SELECT x.asset_id FROM event_records x JOIN event_types et USING (event_type_id)
-                                   WHERE et.name = 'heartbeat'),
+                             UNION SELECT asset_id FROM event_records GROUP BY asset_id),
                     seen AS (SELECT asset_id, max(ts) AS last_seen FROM (
                                  SELECT asset_id, ts FROM telemetry_records WHERE ts < %(end)s
                                  UNION ALL SELECT asset_id, ts FROM event_records WHERE ts < %(end)s) u
                              GROUP BY asset_id)
                     SELECT s.*, COALESCE(e.events,0) AS events, COALESCE(e.faults,0) AS faults,
                            COALESCE(e.warnings,0) AS warnings, COALESCE(e.criticals,0) AS criticals,
+                           COALESCE(e.point_criticals,0) + COALESCE(ap.n,0) AS active_criticals,
                            COALESCE(e.heartbeats,0) AS heartbeats, COALESCE(t.n,0) AS telemetry,
                            (s.asset_id IN (SELECT asset_id FROM ever)) AS reports, seen.last_seen
                     FROM scope s LEFT JOIN ev e USING (asset_id) LEFT JOIN tel t USING (asset_id)
-                    LEFT JOIN seen USING (asset_id)
+                    LEFT JOIN active_pair_criticals ap USING (asset_id) LEFT JOIN seen USING (asset_id)
                     ORDER BY s.system, s.name""",
                                     {"system": code, "start": start, "end": end, "skip": list(NOT_COUNTED_EVENTS),
+                                     "paired_types": paired_event_types,
                                      "faults": list(FAULT_EVENTS)}).fetchall()
         except core.NoDataError as exc:
             raise HTTPException(503, str(exc))
@@ -278,20 +295,23 @@ def create_router(open_ro=core.open_readonly):
 
         items = []
         for r in rows:
-            # same priority as the KPI "Healthy assets": critical > no data > warning > normal
-            if r["criticals"]:
-                status, reason = "CRITICAL", f"{r['criticals']} critical event(s) in the window"
+            # Match dashboard status semantics: critical > no data/warning > unknown > normal.
+            if r["active_criticals"]:
+                status, reason = "CRITICAL", f"{r['active_criticals']} active critical condition(s)"
             elif r["reports"] and r["telemetry"] == 0 and r["heartbeats"] == 0:
                 status, reason = "WARNING", "No telemetry or heartbeat received in the window"
             elif r["warnings"]:
                 status, reason = "WARNING", f"{r['warnings']} warning event(s) in the window"
+            elif not r["reports"]:
+                status, reason = "UNKNOWN", "No telemetry or events have ever been recorded"
             else:
                 status, reason = "OK", "No warning or critical events"
             items.append({"asset_id": r["asset_id"], "name": r["name"], "system_type": SYSTEM_TO_UI[r["system"]],
                           "building": r["building"], "floor": r["floor"], "zone": r["zone"], "status": status,
                           "reason": reason, "events": r["events"], "faults": r["faults"], "warnings": r["warnings"],
-                          "criticals": r["criticals"], "last_seen": _iso(r["last_seen"]) if r["last_seen"] else None})
-        rank = {"CRITICAL": 0, "WARNING": 1, "OK": 2}
+                          "criticals": r["criticals"], "active_criticals": r["active_criticals"],
+                          "last_seen": _iso(r["last_seen"]) if r["last_seen"] else None})
+        rank = {"CRITICAL": 0, "WARNING": 1, "UNKNOWN": 2, "OK": 3}
         items.sort(key=lambda i: (rank[i["status"]], i["system_type"], i["name"]))
         return {"window": {"from": _iso(start), "to": _iso(last), "hours": hours}, "items": items}
 

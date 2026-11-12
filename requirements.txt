@@ -4,3 +4,4 @@ psycopg[binary]==3.2.3
 python-socketio==5.12.1
 python-dotenv==1.0.1
 psycopg2-binary==2.9.10
+httpx==0.28.1

@@ -32,8 +32,11 @@ def detect(cur, hours=None):
 
 
 @da.guard
-def explain_alert(cur, alert_id, use_llm=True):
-    """Explanation + grounding check + recommendations for one stored alert; saved on the alert.
+def explain_alert(cur, alert_id, use_llm=True, persist=True):
+    """Explanation + grounding check + recommendations for one stored alert.
+
+    By default the response is saved on the alert. Callers that only need an ephemeral explanation can pass
+    ``persist=False``.
     The evidence rows are re-read from the fact tables first; an unverified row stops the explanation."""
     alert = da.get_alert(cur, alert_id)
     if alert is None:
@@ -42,7 +45,8 @@ def explain_alert(cur, alert_id, use_llm=True):
     verification = evidence.alert_evidence(cur, alert_id)
     response = val.explain_alert(alert, asset, use_llm=use_llm, verification=verification,
                                  as_of=da.latest_ts(cur))
-    da.save_explanation(cur, alert_id, response)
+    if persist:
+        da.save_explanation(cur, alert_id, response)
     return response
 
 

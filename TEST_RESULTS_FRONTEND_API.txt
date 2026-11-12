@@ -1,0 +1,34 @@
+Anzma Platform - Day 3 integration verification
+Execution date: 2026-11-12 (output supplied by Amr)
+Runtime: Docker Compose API container; frontend API suite creates isolated database anzma_api_test.
+
+Command sequence:
+  docker compose build api
+  docker compose up -d --no-deps --force-recreate api
+  docker compose exec -T api python test_frontend_api.py
+
+Result: 17/17 passed.
+Coverage reported by the test output:
+- alert detection and idempotent rerun
+- five-system dashboard overview, KPI values, trends and equipment-health ordering
+- recovered CRAC event remains historical while current asset status is not Critical
+- never-reported asset is Unknown and previously reported asset with no selected-window data is Warning, consistently in dashboard and assistant
+- alert evidence references, incident evidence verification and lifecycle
+- tampered evidence detection
+- deterministic HVAC assistant fallback uses the stored asset and configured threshold
+- dashboard, static files and health endpoint
+- graceful database-unavailable responses
+
+The application test emitted two Ollama agent timeout messages and then passed through the fallback behavior. This is not a successful live-model demonstration.
+
+Command:
+  docker compose exec -T api python test_chat_consistency.py
+
+Result: 31/31 passed (see TEST_RESULTS_CHAT_CONSISTENCY.txt).
+
+Limitations still open:
+- No successful live Ollama/Qwen run through the integrated application has been captured.
+- Amr confirms engineering-owner approval for the HVAC playbook; the scope of sign-off for the other system playbooks must be confirmed before presenting those actions as approved.
+- A short integrated walkthrough/recording with evidence, validation, recommendations, both AI paths, and dashboard display is still needed.
+
+Playbook approval update: Amr reports that the engineering owner approved the HVAC playbook. The current approver metadata remains the repository's placeholder and should be replaced with the approver's identity for an auditable handover.

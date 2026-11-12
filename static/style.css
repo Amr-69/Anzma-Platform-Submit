@@ -307,6 +307,10 @@ th.n {
   color: var(--crit);
 }
 
+.pill.UNKNOWN {
+  color: #64748b;
+}
+
 #msg {
   display: none;
   margin: 14px 0;
