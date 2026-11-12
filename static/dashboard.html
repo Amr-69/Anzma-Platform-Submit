@@ -9,31 +9,158 @@
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <script src="/static/chat-widget.js" defer></script>
   <style>
-    .inc { margin: 0 0 22px; }
-    .inc-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
-    .inc-head h3 { margin: 0; }
-    .inc-llm { font-size: 13px; color: var(--muted, #667085); display: flex; gap: 6px; align-items: center; }
-    .inc-hint { margin: 6px 0 10px; font-size: 13px; color: var(--muted, #667085); }
-    #incList { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-    #incList li { border: 1px solid var(--line, #e3e6ea); border-left: 4px solid #98a2b3; border-radius: 8px;
-      padding: 10px 12px; cursor: pointer; background: var(--surface, #fff); }
-    #incList li.CRITICAL { border-left-color: var(--crit, #b3261e); }
-    #incList li.WARNING { border-left-color: var(--warn, #9a6410); }
-    #incList li[aria-selected="true"] { outline: 2px solid #2a7f8e; }
-    #incList .t { font-weight: 600; }
-    #incList .m { font-size: 12px; color: var(--muted, #667085); margin-top: 3px; }
-    .tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px;
-      background: #eef0f3; color: #344054; margin-right: 6px; }
-    .tag.CRITICAL { background: #fde8e7; color: #b3261e; } .tag.WARNING { background: #fdf0d9; color: #9a6410; }
-    .tag.ok { background: #e3f4ea; color: #1e6b3f; } .tag.bad { background: #fde8e7; color: #b3261e; }
-    .inc-detail { margin-top: 14px; border-top: 1px solid var(--line, #e3e6ea); padding-top: 14px; }
-    .inc-detail h4 { margin: 14px 0 6px; font-size: 14px; }
-    .inc-detail table { width: 100%; border-collapse: collapse; font-size: 12px; }
-    .inc-detail th, .inc-detail td { text-align: left; padding: 3px 6px; border-bottom: 1px solid #eef0f3; }
-    .inc-detail .acts button, .inc-detail .alert-row button, #incRun { margin-right: 6px; }
-    .inc-detail .answer { background: #f7f8fa; border-radius: 8px; padding: 10px 12px; margin: 8px 0; white-space: pre-wrap; }
-    .inc-detail ul { margin: 4px 0 0 18px; padding: 0; }
-    .inc-detail .alert-row { border: 1px solid #eef0f3; border-radius: 8px; padding: 8px 10px; margin: 8px 0; }
+    .inc {
+      margin: 0 0 22px;
+    }
+
+    .inc-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .inc-head h3 {
+      margin: 0;
+    }
+
+    .inc-llm {
+      font-size: 13px;
+      color: var(--muted, #667085);
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .inc-hint {
+      margin: 6px 0 10px;
+      font-size: 13px;
+      color: var(--muted, #667085);
+    }
+
+    #incList {
+      list-style: none;
+      margin: 0;
+      padding: 0 6px 0 0;
+      display: grid;
+      gap: 8px;
+      align-content: start;
+      max-height: 320px;
+      overflow-y: auto;
+    }
+
+    #incList li {
+      border: 1px solid var(--line, #e3e6ea);
+      border-left: 4px solid #98a2b3;
+      border-radius: 8px;
+      padding: 10px 12px;
+      cursor: pointer;
+      background: var(--surface, #fff);
+    }
+
+    #incList li.CRITICAL {
+      border-left-color: var(--crit, #b3261e);
+    }
+
+    #incList li.WARNING {
+      border-left-color: var(--warn, #9a6410);
+    }
+
+    #incList li[aria-selected="true"] {
+      outline: 2px solid #2a7f8e;
+    }
+
+    #incList .t {
+      font-weight: 600;
+    }
+
+    #incList .m {
+      font-size: 12px;
+      color: var(--muted, #667085);
+      margin-top: 3px;
+    }
+
+    .tag {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 1px 7px;
+      border-radius: 10px;
+      background: #eef0f3;
+      color: #344054;
+      margin-right: 6px;
+    }
+
+    .tag.CRITICAL {
+      background: #fde8e7;
+      color: #b3261e;
+    }
+
+    .tag.WARNING {
+      background: #fdf0d9;
+      color: #9a6410;
+    }
+
+    .tag.ok {
+      background: #e3f4ea;
+      color: #1e6b3f;
+    }
+
+    .tag.bad {
+      background: #fde8e7;
+      color: #b3261e;
+    }
+
+    .inc-detail {
+      margin-top: 14px;
+      border-top: 1px solid var(--line, #e3e6ea);
+      padding-top: 14px;
+    }
+
+    .inc-detail h4 {
+      margin: 14px 0 6px;
+      font-size: 14px;
+    }
+
+    .inc-detail table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    .inc-detail th,
+    .inc-detail td {
+      text-align: left;
+      padding: 3px 6px;
+      border-bottom: 1px solid #eef0f3;
+    }
+
+    .inc-detail .acts button,
+    .inc-detail .alert-row button,
+    #incRun {
+      margin-right: 6px;
+    }
+
+    .inc-detail .answer {
+      background: #f7f8fa;
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin: 8px 0;
+      white-space: pre-wrap;
+    }
+
+    .inc-detail ul {
+      margin: 4px 0 0 18px;
+      padding: 0;
+    }
+
+    .inc-detail .alert-row {
+      border: 1px solid #eef0f3;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin: 8px 0;
+    }
   </style>
 </head>
 
@@ -87,14 +214,17 @@
     <section id="incidents" class="panel inc">
       <div class="inc-head">
         <h3>Incidents <span id="incCount" class="ac-count">0</span></h3>
-        <label class="inc-llm" title="If the model is not available the answer falls back to a deterministic one built from the stored evidence">
+        <label class="inc-llm"
+          title="If the model is not available the answer falls back to a deterministic one built from the stored evidence">
           <input type="checkbox" id="incLlm"> Use local AI model (Ollama)
         </label>
       </div>
-      <p class="inc-hint">Related alerts are grouped into incidents. Select one to see its evidence, the explanation and the recommended actions.</p>
+      <p class="inc-hint">Related alerts are grouped into incidents. Select one to see its evidence, the explanation and
+        the recommended actions.</p>
       <ul id="incList"></ul>
       <p id="incEmpty" class="ac-empty">No incidents yet. Detection runs automatically; you can also run it now.
-        <button id="incRun" type="button">Run detection</button></p>
+        <button id="incRun" type="button">Run detection</button>
+      </p>
       <div id="incDetail" class="inc-detail" hidden></div>
     </section>
 
@@ -119,6 +249,10 @@
       <section class="panel" id="p-acc">
         <h3>Denied access attempts</h3>
         <div><canvas id="c-acc"></canvas></div>
+      </section>
+      <section class="panel" id="p-top">
+        <h3>System health (assets by status)</h3>
+        <div style="height:300px"><canvas id="c-top"></canvas></div>
       </section>
     </div>
     <h2>Equipment health</h2>
@@ -406,6 +540,7 @@
           maintainAspectRatio: false,
           animation: false,
           spanGaps: true,
+          indexAxis: opts.horizontal ? "y" : "x",
 
           interaction: {
             mode: "index",
@@ -429,13 +564,15 @@
 
               ticks: {
                 maxTicksLimit: 10,
-                maxRotation: 0
+                maxRotation: 0,
+                precision: 0
               }
             },
 
             y: {
               stacked: !!opts.stacked,
-              beginAtZero: opts.zero !== false
+              beginAtZero: opts.zero !== false,
+              ticks: { autoSkip: false }
             }
           },
 
@@ -450,6 +587,26 @@
           }
         }
       });
+    }
+
+
+    function drawSystemHealth(systems) {
+      const rows = systems || [];
+      const sets = [
+        { label: "OK", data: rows.map(s => s.ok), backgroundColor: "#2e7d4f" },
+        { label: "Warning", data: rows.map(s => s.warning), backgroundColor: "#e0a030" },
+        { label: "Critical", data: rows.map(s => s.critical), backgroundColor: "#b3261e" }
+      ];
+      if (rows.some(s => s.no_data)) {
+        sets.push({ label: "No data", data: rows.map(s => s.no_data || 0), backgroundColor: "#98a2b3" });
+      }
+      chart(
+        "c-top",
+        "bar",
+        rows.map(s => LABEL[s.type] || s.type),
+        sets,
+        { horizontal: true, stacked: true }
+      );
     }
 
 
@@ -676,6 +833,8 @@
           `Data window: ${fmtTime(summary.window.from, true)} to ${fmtTime(summary.window.to, true)} (the latest event in the database is treated as "now")`;
 
         drawStatus(summary.systems);
+
+        drawSystemHealth(summary.systems);
 
         drawKpis(summary.kpis);
 
@@ -1306,8 +1465,8 @@
       try {
         const data = await jsonFetch("/incidents");
         const items = data.incidents || [];
-        $("incCount").textContent = String(items.filter(i => i.status !== "resolved").length);
-        $("incEmpty").style.display = items.length ? "none" : "block";
+        const openN = items.filter(i => i.status !== "resolved").length;
+        $("incCount").textContent = openN === items.length ? String(items.length) : `${openN} open / ${items.length} total`; $("incEmpty").style.display = items.length ? "none" : "block";
         $("incList").innerHTML = items.map(i => `
           <li class="${esc(i.severity.toUpperCase())}" data-id="${esc(i.id)}"
               aria-selected="${INC.selected === i.id}">

@@ -79,25 +79,46 @@ AGENT_TOOLS = [
 ]
 
 
-def _agent_system_prompt():
+_SCHEMA_TXT = None
+
+
+def _schema_text():
+    """Schema text for the system prompt, built once. The DB fallback schema is never cached."""
+    global _SCHEMA_TXT
+    if _SCHEMA_TXT:
+        return _SCHEMA_TXT
     schema = get_schema()
-    schema_txt = "\n".join(f"{t}({', '.join(cols)})" for t, cols in schema.get("columns", {}).items())
+    txt = "\n".join(f"{t}({', '.join(cols)})" for t, cols in schema.get("columns", {}).items())
+    if _schema_snapshot():                # only cache when it came from the real database
+        _SCHEMA_TXT = txt
+    return txt
+
+
+def _agent_system_prompt(hours=None):
+    schema_txt = _schema_text()
     return (
         "You are the operations assistant of a smart-building monitoring platform. You talk with the operator "
         "like a helpful colleague: natural, short, direct. Reply in the user's language (Arabic or English).\n\n"
         "DATABASE (PostgreSQL, read-only). Tables and columns:\n" + schema_txt + "\n\n"
+        "VALUES (always lowercase in SQL): alerts/incidents/event_records.severity IN ('info','warning','critical'); "
+        "alerts/incidents.status IN ('open','acknowledged','resolved').\n"
+        "DASHBOARD 'Critical alerts' = COUNT of event_records with severity='critical' in the selected window "
+        "(NOT the alerts table). The alerts table holds grouped detections.\n\n"
         "RULES:\n"
         "1. For any question about the building's data (alerts, incidents, cameras, assets, temperatures, energy, "
         "network, risks, priorities) call run_sql. You may call it several times, e.g. look at a table first, then "
         "refine. Use ONLY the tables/columns listed above.\n"
         "2. Never invent numbers, names, times or statuses. Use only what the tool returned. If the data cannot "
         "answer, say so clearly and say what is missing.\n"
-        "3. Questions about risks/problems: look at open alerts and incidents (severity CRITICAL > WARNING > INFO), "
+        "3. Questions about risks/problems: look at open alerts and incidents (severity critical > warning > info), "
         "group by asset or location, then explain in plain words and suggest what to check first.\n"
         "4. An offline camera is one whose latest camera_offline event is newer than its latest camera_online event.\n"
         "5. Follow-ups like 'summarize them' or 'ده' refer to the previous messages in this conversation.\n"
         "6. Greetings, general explanations or advice that need no data: answer directly without tools.\n"
         "7. If a query errors, read the error and retry with a corrected query.\n"
+        "8. If the user says a number differs from the dashboard, run new queries (both event_records and alerts, "
+        "same time window) before explaining. Never guess reasons.\n"
+        f"Selected time window: {'last %s hours' % hours if hours else 'all data'}.\n"
         f"Current time (UTC): {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}."
     )
 
@@ -119,8 +140,8 @@ def _agent_answer(message, history, session_state, lang, cur, conn, body, pipeli
     gives up, so the caller can fall back to the rule-based answers."""
     if body.use_llm is False:
         return None
-    messages = [{"role": "system", "content": _agent_system_prompt()}]
-    turns = list(history or [])[-8:]
+    messages = [{"role": "system", "content": _agent_system_prompt(getattr(body, "hours", None))}]
+    turns = list(history or [])[-4:]
     if turns and turns[-1].get("role") == "user" and (turns[-1].get("text") or "").strip() == message.strip():
         turns = turns[:-1]                                       # widget already put the current message in history
     for turn in turns:
@@ -130,16 +151,28 @@ def _agent_answer(message, history, session_state, lang, cur, conn, body, pipeli
     messages.append({"role": "user", "content": message})
 
     sources, evidence, row_counts = [], [], []
+    nudged = False
     try:
         for _ in range(5):                                       # max 5 tool rounds
             resp = _ollama_chat({"model": OLLAMA_MODEL, "messages": messages, "tools": AGENT_TOOLS,
-                                 "stream": False, "options": {"temperature": 0.2}})
+                                 "stream": False,
+                                 "keep_alive": "30m",            # top-level (not inside options)
+                                 "options": {"temperature": 0.2, "num_ctx": 4096, "num_predict": 300}})
+            print("[chat] prompt_tokens =", resp.get("prompt_eval_count"), flush=True)
             msg = resp.get("message") or {}
             calls = msg.get("tool_calls") or []
             if not calls:
                 answer = (msg.get("content") or "").strip()
                 if not answer:
                     return None
+                # model wrote SQL as text instead of calling the tool -> ask once to run it properly
+                if ("```sql" in answer or re.match(r"(?is)^\s*(select|with)\b", answer)) and not nudged:
+                    nudged = True
+                    messages.append(msg)
+                    messages.append({"role": "user", "content":
+                        "Do not write SQL in the reply. Call the run_sql tool with that query, "
+                        "using only the tables and columns listed in the schema."})
+                    continue
                 passed = bool(evidence) and _numbers_grounded(answer, " ".join(evidence), row_counts)
                 return _reply(answer, lang, "OLLAMA", passed, sources, extra={"session_state": {"last_assets": []}})
             messages.append(msg)
@@ -173,8 +206,8 @@ def _agent_answer(message, history, session_state, lang, cur, conn, body, pipeli
                         cur.connection.rollback()
                     except Exception:
                         pass
-                    result = f"ERROR: {exc}"
-                messages.append({"role": "tool", "tool_name": name, "content": result[:6000]})
+                    result = f"ERROR: {exc}. Use only these tables/columns:\n{_schema_text()}"
+                messages.append({"role": "tool", "tool_name": name, "content": result[:2500]})
         return None
     except Exception as exc:                                     # Ollama down / timeout / bad JSON
         print(f"[chat] LLM agent failed: {exc!r}", flush=True)
@@ -497,10 +530,15 @@ def _reply(answer, lang, source, passed, sources=None, sufficient=True, hours=No
     }
 
 
-@lru_cache(maxsize=1)
-def _schema_snapshot():
-    from psycopg import sql
+_SCHEMA_ROWS = None
 
+
+def _schema_snapshot():
+    """Column list of the public schema. Cached only after a successful fetch, so a failed first
+    connection is retried on the next request instead of being remembered forever."""
+    global _SCHEMA_ROWS
+    if _SCHEMA_ROWS:                      # already fetched successfully
+        return _SCHEMA_ROWS
     rows = []
     try:
         from psycopg2 import connect
@@ -531,6 +569,8 @@ def _schema_snapshot():
             rows = cur.fetchall()
     finally:
         conn.close()
+    if rows:
+        _SCHEMA_ROWS = rows               # cache only on success
     return rows
 
 
@@ -550,6 +590,9 @@ def _safe_sql(sql_text: str) -> str:
     ]
     if any(token in upper for token in blocked):
         raise ValueError("destructive SQL is not allowed")
+    # enum values in the schema are lowercase; the model sometimes writes 'CRITICAL' / 'RESOLVED'
+    text = re.sub(r"'(CRITICAL|WARNING|INFO|OPEN|ACKNOWLEDGED|RESOLVED)'",
+                  lambda m: "'" + m.group(1).lower() + "'", text)
     if " LIMIT " not in upper:
         text = f"{text.rstrip(';')} LIMIT 200"
     return text

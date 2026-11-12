@@ -207,6 +207,17 @@ def create_router(open_ro=core.open_readonly):
                         WHERE x.ts >= %(start)s AND x.ts < %(end)s AND et.name = 'access_denied' GROUP BY 1""", p):
                     if 0 <= r["b"] < n_buckets:
                         denied[r["b"]] = r["n"]
+                top_rows = conn.execute("""
+                    SELECT a.name, count(*) AS n
+                    FROM event_records x JOIN event_types et USING (event_type_id)
+                    JOIN assets a USING (asset_id) JOIN system_types st USING (system_type_id)
+                    WHERE x.ts >= %(start)s AND x.ts < %(end)s AND et.name <> ALL(%(skip)s)
+                      AND (%(system)s::text IS NULL OR st.code = %(system)s::text)
+                    GROUP BY a.asset_id, a.name
+                    ORDER BY n DESC, a.name
+                    LIMIT 10""", dict(p, skip=list(NOT_COUNTED_EVENTS))).fetchall()
+                top_assets = {"labels": [r["name"] for r in top_rows],
+                              "values": [r["n"] for r in top_rows]}        
                 has_granted = conn.execute("SELECT 1 FROM event_types WHERE name = 'access_granted'").fetchone()
         except core.NoDataError as exc:
             raise HTTPException(503, str(exc))
@@ -218,8 +229,8 @@ def create_router(open_ro=core.open_readonly):
                 "bandwidth_unit": "%",
                 # not stored in this dataset: null, never zero (zero would claim that nobody was let in)
                 "access_granted": None if not has_granted else [None] * n_buckets,
-                "access_denied": denied}
-
+                "access_denied": denied,
+                "top_assets": top_assets}
     # ------------------------------------------------------------------ equipment health
     @router.get("/dashboard/equipment-health", summary="One row per asset")
     def equipment_health(hours: int = Query(24), system_type: str | None = Query(None)):
