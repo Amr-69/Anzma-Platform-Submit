@@ -18,11 +18,11 @@
 
   const FALLBACK_QUESTIONS = [
     "What is the current building status?",
-    "How many critical alerts did we have?",
-    "How many cameras are offline?",
-    "What is the CRAC temperature?",
-    "Why is it going wrong?",
-    "ازاي نصلح ده؟"
+    "What were the recent faults?",
+    "What is the CCTV availability percentage?",
+    "Are there any network issues?",
+    "What are the repair priorities?",
+    "How did energy consumption change?"
   ];
 
   let chatState = { last_alert_id: null, last_incident_id: null, last_assets: [] };

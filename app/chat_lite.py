@@ -19,6 +19,7 @@ from functools import lru_cache
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from app import chat_facts
 from pydantic import BaseModel, Field
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -98,7 +99,8 @@ def _agent_system_prompt(hours=None):
     schema_txt = _schema_text()
     return (
         "You are the operations assistant of a smart-building monitoring platform. You talk with the operator "
-        "like a helpful colleague: natural, short, direct. Reply in the user's language (Arabic or English).\n\n"
+        "like a helpful colleague: natural, short, direct. Reply ONLY in the user's language: Arabic or English. NEVER reply in Chinese or any other language, "
+        "even for short or informal questions (Egyptian Arabic counts as Arabic).\n\n"
         "DATABASE (PostgreSQL, read-only). Tables and columns:\n" + schema_txt + "\n\n"
         "VALUES (always lowercase in SQL): alerts/incidents/event_records.severity IN ('info','warning','critical'); "
         "alerts/incidents.status IN ('open','acknowledged','resolved').\n"
@@ -152,6 +154,7 @@ def _agent_answer(message, history, session_state, lang, cur, conn, body, pipeli
 
     sources, evidence, row_counts = [], [], []
     nudged = False
+    lang_fixed = False
     try:
         for _ in range(5):                                       # max 5 tool rounds
             resp = _ollama_chat({"model": OLLAMA_MODEL, "messages": messages, "tools": AGENT_TOOLS,
@@ -173,6 +176,14 @@ def _agent_answer(message, history, session_state, lang, cur, conn, body, pipeli
                         "Do not write SQL in the reply. Call the run_sql tool with that query, "
                         "using only the tables and columns listed in the schema."})
                     continue
+                if re.search(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]", answer):   # Chinese/Japanese/Korean drift
+                    if not lang_fixed:
+                        lang_fixed = True
+                        messages.append(msg)
+                        messages.append({"role": "user", "content":
+                            "Answer again in Arabic only." if lang == "ar" else "Answer again in English only."})
+                        continue
+                    return None
                 passed = bool(evidence) and _numbers_grounded(answer, " ".join(evidence), row_counts)
                 return _reply(answer, lang, "OLLAMA", passed, sources, extra={"session_state": {"last_assets": []}})
             messages.append(msg)
@@ -728,11 +739,11 @@ def create_router(day2_connect, pipeline, inc, use_llm_default, db_errors=()):
         return {
             "questions": [
                 "What is the current building status?",
-                "How many critical alerts did we have?",
-                "How many cameras are offline?",
-                "What is the CRAC temperature?",
-                "Why is it going wrong?",
-                "ازاي نصلح ده؟",
+                "What were the recent faults?",
+                "What is the CCTV availability percentage?",
+                "Are there any network issues?",
+                "What are the repair priorities?",
+                "How did energy consumption change?",
             ],
             "extra": [],
             "intents": ["grounded_db_questions"],
@@ -751,6 +762,9 @@ def create_router(day2_connect, pipeline, inc, use_llm_default, db_errors=()):
         try:
             with day2_connect() as conn:
                 with conn.cursor() as cur:
+                    fixed = chat_facts.try_answer(low, lang, getattr(body, "hours", None))
+                    if fixed is not None:
+                        return fixed
                     agent = _agent_answer(text, history, session_state, lang, cur, conn, body, pipeline)
                     if agent is not None:
                         return agent
