@@ -89,6 +89,56 @@ def _status_word(n, c, lang):
 
 
 # ----------------------------------------------------------------------------------------------- answers
+
+# fault event -> the event that clears it. Access-control events (door_forced, access_denied, ...) have no
+# recovery event type in the schema, so they are point-in-time (historical) records, never "active".
+PAIRS = (("hvac_fault", "hvac_recovered"), ("fire_alarm_triggered", "alarm_cleared"),
+         ("link_down", "link_up"), ("camera_offline", "camera_online"))
+
+
+def _conditions(conn, end, code=None):
+    """Latest fault/recovery event per asset and fault type, as of `end`.
+    active = the latest of the two is the fault; otherwise it recovered. Returns None if the query fails, so the
+    caller can simply leave this section out instead of breaking the whole answer."""
+    vals = ", ".join(f"('{f}', '{r}')" for f, r in PAIRS)         # constants only, never user input
+    try:
+        return conn.execute(f"""
+            WITH pairs(fault, recov) AS (VALUES {vals}),
+            latest AS (
+                SELECT DISTINCT ON (er.asset_id, p.fault) er.asset_id, p.fault, et.name AS ev, er.ts
+                FROM event_records er
+                JOIN event_types et ON et.event_type_id = er.event_type_id
+                JOIN pairs p ON et.name = p.fault OR et.name = p.recov
+                WHERE er.ts < %(end)s
+                ORDER BY er.asset_id, p.fault, er.ts DESC)
+            SELECT a.name AS asset, st.code AS system, l.fault, (l.ev = l.fault) AS active, l.ts
+            FROM latest l
+            JOIN assets a ON a.asset_id = l.asset_id
+            JOIN system_types st ON st.system_type_id = a.system_type_id
+            WHERE (%(code)s::text IS NULL OR st.code = %(code)s::text)
+            ORDER BY (l.ev = l.fault) DESC, l.ts DESC""", {"end": end, "code": code}).fetchall()
+    except Exception:
+        log.exception("chat_facts: condition query failed")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return None
+
+
+def _condition_lines(rows, lang, with_system=True, limit=5):
+    out = []
+    for r in [x for x in rows if x["active"]][:limit]:
+        who = f"{r['asset']} ({_label(r['system'], lang)})" if with_system else r["asset"]
+        out.append(_tr(lang, f"  - ACTIVE: {who}: {r['fault']} since {_t(r['ts'])}",
+                       f"  - نشط: {who}: {r['fault']} منذ {_t(r['ts'])}"))
+    for r in [x for x in rows if not x["active"]][:limit]:
+        who = f"{r['asset']} ({_label(r['system'], lang)})" if with_system else r["asset"]
+        out.append(_tr(lang, f"  - RECOVERED: {who}: {r['fault']} cleared at {_t(r['ts'])}",
+                       f"  - تعافى: {who}: {r['fault']} تم الحل في {_t(r['ts'])}"))
+    return out
+
+
 def _status(conn, lang, hours, p, last):
     lines, srcs = [_tr(lang, f"Building status (last {hours} h, until {_t(last)}):",
                        f"حالة المبنى (آخر {hours} ساعة حتى {_t(last)}):")], []
@@ -110,12 +160,35 @@ def _status(conn, lang, hours, p, last):
                      f"- الحوادث المفتوحة: {inc['open_n']} ({inc['crit_n']} حرجة) [Q{q}]"))
     srcs.append({"ref": f"Q{q}", "text": f"SELECT ... FROM incidents WHERE status <> 'resolved' -> {inc['open_n']} open, "
                                          f"{inc['crit_n']} critical"})
+    conds = _conditions(conn, p[1])
+    if conds is not None:
+        q += 1
+        n_act = sum(1 for r in conds if r["active"])
+        lines.append(_tr(lang, f"- Active faults now: {n_act}; recovered: {len(conds) - n_act} [Q{q}]",
+                         f"- أعطال نشطة الآن: {n_act}؛ تعافت: {len(conds) - n_act} [Q{q}]"))
+        lines += _condition_lines(conds, lang)
+        lines.append(_tr(lang, "Note: the system status above reflects events inside the selected window; ACTIVE / "
+                               "RECOVERED reflects the latest fault or recovery event of each asset.",
+                         "ملاحظة: حالة الأنظمة أعلاه تعكس أحداث الفترة المحددة؛ نشط / تعافى يعكس آخر حدث عطل أو تعافٍ لكل أصل."))
+        srcs.append({"ref": f"Q{q}", "text": "Latest fault/recovery event per asset (hvac_fault/hvac_recovered, "
+                                             "fire_alarm_triggered/alarm_cleared, link_down/link_up, "
+                                             f"camera_offline/camera_online) -> {len(conds)} asset conditions"})
     return "\n".join(lines), srcs
 
 
 def _faults(conn, lang, hours, p, last):
     rows = conn.execute("""
-        SELECT er.ts, er.severity, et.name AS event_type, a.name AS asset, st.code AS system, l.name AS zone
+        SELECT er.ts, er.severity, et.name AS event_type, a.name AS asset, st.code AS system, l.name AS zone,
+               CASE WHEN et.name IN ('hvac_fault', 'fire_alarm_triggered', 'link_down', 'camera_offline') THEN
+                      CASE WHEN EXISTS (
+                          SELECT 1 FROM event_records r2 JOIN event_types t2 ON t2.event_type_id = r2.event_type_id
+                          WHERE r2.asset_id = er.asset_id AND r2.ts > er.ts AND r2.ts < %(end)s
+                            AND t2.name = CASE et.name WHEN 'hvac_fault' THEN 'hvac_recovered'
+                                                       WHEN 'fire_alarm_triggered' THEN 'alarm_cleared'
+                                                       WHEN 'link_down' THEN 'link_up'
+                                                       ELSE 'camera_online' END)
+                           THEN 'recovered' ELSE 'active' END
+                    ELSE 'historical' END AS state
         FROM event_records er
         JOIN event_types et ON et.event_type_id = er.event_type_id
         JOIN assets a ON a.asset_id = er.asset_id
@@ -131,8 +204,11 @@ def _faults(conn, lang, hours, p, last):
     lines = [_tr(lang, f"Recent faults (last {hours} h, until {_t(last)}), newest first:",
                  f"آخر الأعطال (آخر {hours} ساعة حتى {_t(last)})، الأحدث أولًا:")]
     for r in rows:
-        lines.append(f"- {_t(r['ts'])} · {r['severity'].upper()} · {r['event_type']} · {r['asset']} "
-                     f"({_label(r['system'], lang)}, {r['zone']}) [Q1]")
+        lines.append(f"- {_t(r['ts'])} · {r['severity'].upper()} · {r['state'].upper()} · {r['event_type']} · "
+                     f"{r['asset']} ({_label(r['system'], lang)}, {r['zone']}) [Q1]")
+    lines.append(_tr(lang, "State: ACTIVE = no recovery event after it; RECOVERED = a recovery event followed; "
+                           "HISTORICAL = a point-in-time event with no recovery type (e.g. access events).",
+                     "الحالة: نشط = لا يوجد حدث تعافٍ بعده؛ تعافى = تبعه حدث تعافٍ؛ تاريخي = حدث لحظي بلا نوع تعافٍ."))
     return "\n".join(lines), [{"ref": "Q1", "text": f"SELECT ... FROM event_records WHERE severity IN ('warning','critical') "
                                                    f"AND event type <> heartbeat -> {len(rows)} rows (max 8)"}]
 
@@ -203,6 +279,16 @@ def _system(conn, lang, hours, p, last, code):
     else:
         lines.append(_tr(lang, f"No events other than heartbeats were recorded for {name} in the window [Q2].",
                          f"لم تُسجَّل أحداث (غير heartbeat) لـ {name} في الفترة [Q2]."))
+    conds = _conditions(conn, p[1], code)
+    if code == "ACCESS_CONTROL":
+        lines.append(_tr(lang, "Access events (door_forced, access_denied, ...) are point-in-time records with no "
+                               "recovery event, so they are historical, not active.",
+                         "أحداث الدخول (door_forced، access_denied، ...) أحداث لحظية بلا حدث تعافٍ، لذلك هي تاريخية وليست نشطة."))
+    elif conds:
+        n_act = sum(1 for r in conds if r["active"])
+        lines.append(_tr(lang, f"Current condition: {n_act} active, {len(conds) - n_act} recovered [Q4]",
+                         f"الحالة الحالية: {n_act} نشط، {len(conds) - n_act} تعافى [Q4]"))
+        lines += _condition_lines(conds, lang, with_system=False)
     if inc:
         lines.append(_tr(lang, "Open incidents:", "الحوادث المفتوحة:"))
         lines += [f"- #{r['incident_id']} · {r['severity'].upper()} · {r['status']} · {r['title']} [Q3]" for r in inc]
@@ -211,7 +297,8 @@ def _system(conn, lang, hours, p, last, code):
     return "\n".join(lines), [
         {"ref": "Q1", "text": f"Dashboard status counts for {code}"},
         {"ref": "Q2", "text": f"SELECT ... FROM event_records ({code}, not heartbeat) GROUP BY type, severity -> {len(ev)} rows"},
-        {"ref": "Q3", "text": f"SELECT ... FROM incidents joined to alerts on {code} assets, not resolved -> {len(inc)} rows"}]
+        {"ref": "Q3", "text": f"SELECT ... FROM incidents joined to alerts on {code} assets, not resolved -> {len(inc)} rows"},
+        {"ref": "Q4", "text": f"Latest fault/recovery event per {code} asset -> {len(conds) if conds is not None else 'n/a'} rows"}]
 
 
 def _repair(conn, lang, hours, p, last):

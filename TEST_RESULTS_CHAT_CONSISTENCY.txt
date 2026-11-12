@@ -1,0 +1,34 @@
+Chat vs dashboard consistency test - http://localhost:8000 - window 24 h
+
+PASS  dashboard returns the five systems
+PASS  status answer comes from the database
+PASS  status answer has citations
+PASS  status: HVAC counts equal the dashboard tile
+PASS  status: HVAC status word equals dashboard (Warning)
+PASS  status: Network counts equal the dashboard tile
+PASS  status: Network status word equals dashboard (Operational)
+PASS  status: Access control counts equal the dashboard tile
+PASS  status: Access control status word equals dashboard (Operational)
+PASS  status: CCTV counts equal the dashboard tile
+PASS  status: CCTV status word equals dashboard (Warning)
+PASS  status: Fire alarm counts equal the dashboard tile
+PASS  status: Fire alarm status word equals dashboard (Critical)
+PASS  status: open incidents equal the dashboard KPI
+PASS  status: active vs recovered is reported
+PASS  Network report equals the dashboard tile
+PASS  Access control report equals the dashboard tile
+PASS  HVAC report equals the dashboard tile
+PASS  Fire alarm report equals the dashboard tile
+PASS  CCTV: camera total equals the dashboard asset count
+PASS  CCTV: cameras with no data are not counted as available
+PASS  CCTV: percentage matches the counts
+PASS  'What were the recent faults?' answered from the database with citations
+PASS  'What are the repair priorities?' answered from the database with citations
+PASS  'How did energy consumption change?' answered from the database with citations
+PASS  faults: each event is marked ACTIVE / RECOVERED / HISTORICAL
+PASS  Arabic question gets an Arabic answer
+PASS  no Chinese/Japanese/Korean text in the answer to: والاكسيس كونترول اخباره ايه
+PASS  no Chinese/Japanese/Korean text in the answer to: What is the current building status?
+PASS  no Chinese/Japanese/Korean text in the answer to: Why is it going wrong?
+
+30/30 checks passed
