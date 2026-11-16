@@ -1,0 +1,19 @@
+PASS  fresh database: no alerts and no incidents before detection (nothing pre-seeded, no demo fire)
+PASS  POST /alerts/run detects the seeded faults; running it again creates nothing new
+PASS  GET /dashboard/overview: window, five system tiles and KPI cards in the shape the page reads
+PASS  overview: KPI numbers equal the same counts computed straight from the tables
+PASS  system_type accepts the page names (NETWORK, ACCESS) and the database codes; unknown value -> 400
+PASS  GET /dashboard/trends: aligned series, heartbeats not counted, access_granted is null (not stored), denied matches the table
+PASS  trends: the S1 CRAC fault is visible as a temperature rise in the telemetry the chart is drawn from
+PASS  GET /dashboard/equipment-health: one row per asset with the fields the table reads; critical first
+PASS  status semantics: never-reported assets are Unknown; stale previously reported assets are Warning
+PASS  GET /alerts: stored alerts, newest first, UI names and upper-case enums; filters work
+PASS  GET /alerts/{id}: evidence rows carry source references; unknown id -> 404
+PASS  incidents: list, evidence verified, explanation grounded; the page's three calls work together
+PASS  incident lifecycle over HTTP: open -> acknowledged -> resolved; resolved is final (409); unknown -> 404
+PASS  alerts and tampered evidence: a changed fact row is reported as unverified by the explain call
+PASS  chat widget: suggested questions; HVAC question answered from evidence; incident list; unsupported topic is said plainly
+PASS  pages: / and /dashboard serve the dashboard; /static files are served; /health answers
+PASS  database down: every page endpoint answers 503 with a message instead of crashing
+
+17/17 passed

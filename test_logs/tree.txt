@@ -1,0 +1,19 @@
+ M DATA_MODEL.md
+M  app/chat_facts.py
+M  app/chat_lite.py
+ M data-model.sql
+ M day2_ahmed/db_adapter.py
+ M day2_ahmed/e2e_s1.py
+ M day2_ahmed/test_day2_integration.py
+M  docker-compose.yml
+ M test_frontend_api.py
+?? DATABASE_BASELINE.md
+?? DAY2_HANDOVER.md
+?? DAY2_IMPLEMENTATION_REPORT.md
+?? DAY2_TEST_RESULTS.md
+?? anzma_day2_ahmed_deliverables.zip
+?? day2_ahmed/migrations/004_chat_views.sql
+?? day2_ahmed/migrations/005_alert_uniqueness.sql
+?? day2_ahmed/test_data_integrity.py
+?? test_logs/
+?? verify_schema.sql

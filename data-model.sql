@@ -1,3 +1,5 @@
+-- !!! DRAFT / NOT AUTHORITATIVE: proposed 22-table schema. NOT loaded by docker-compose, NOT used by any code or test.
+-- The runtime schema is db/init/anzma_schema_and_seed.sql + day2_ahmed/migrations/003, 004, 005 (see DATABASE_BASELINE.md).
 -- =====================================================================
 -- Anzma AI Insight - unified schema, migration 001
 -- Target: PostgreSQL 16.  Status: DRAFT for Day 1 review (see docs/DATA_MODEL.md)

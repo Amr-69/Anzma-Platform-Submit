@@ -156,17 +156,18 @@ def latest_ts(cur):
 
 
 def store_alerts(cur, alerts):
-    """Insert alerts that are not stored yet. Returns the ids of the new ones (re-running changes nothing)."""
+    """Insert alerts that are not stored yet. Returns the ids of the new ones (re-running changes nothing).
+    Duplicates are rejected by the database itself (migration 005: UNIQUE (rule_id, asset_id, first_ts)), so two
+    concurrent writers cannot both insert the same alert; the loser's INSERT is skipped via ON CONFLICT DO NOTHING."""
     new = []
     for a in alerts:
         cur.execute("""INSERT INTO alerts (rule_id, detection_method, severity, asset_id, title, summary,
                                            first_ts, last_ts, detected_ts, evidence)
-                       SELECT %s,%s,%s,%s,%s,%s,%s,%s,%s,%s
-                       WHERE NOT EXISTS (SELECT 1 FROM alerts WHERE rule_id=%s AND asset_id=%s AND first_ts=%s)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                       ON CONFLICT (rule_id, asset_id, first_ts) DO NOTHING
                        RETURNING alert_id""",
                     (a["rule_id"], enum_to_db(a["detection_method"]), enum_to_db(a["severity"]), a["asset_id"],
-                     a["title"], a["summary"], a["first_ts"], a["last_ts"], a["detected_ts"], Json(cur, a["evidence"]),
-                     a["rule_id"], a["asset_id"], a["first_ts"]))
+                     a["title"], a["summary"], a["first_ts"], a["last_ts"], a["detected_ts"], Json(cur, a["evidence"])))
         row = cur.fetchone()
         if row:
             new.append(row["alert_id"])

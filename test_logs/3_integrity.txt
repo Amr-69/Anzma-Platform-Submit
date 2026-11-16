@@ -1,0 +1,20 @@
+PASS  clean install: sequence applied, 13 tables and 5 views exist
+PASS  views: each of the five exists, is queryable and has exactly the documented columns
+PASS  check: telemetry NaN / Infinity / -Infinity are rejected
+PASS  check: invalid severity is rejected (event_records, alerts, incidents)
+PASS  check: invalid detection_method / status / explanation_source are rejected
+PASS  check: alert with last_ts < first_ts is rejected
+PASS  check: status=resolved without resolved_ts (and resolved_ts without resolved) is rejected
+PASS  check: incident last_ts < first_ts and resolved without resolved_ts are rejected
+PASS  check: scenario_runs end_ts < start_ts is rejected
+PASS  check: system_types.code outside the five allowed codes is rejected
+PASS  foreign key: unknown asset / metric / event type are rejected
+PASS  not null: alert without evidence / rule_id is rejected
+PASS  unique: duplicate telemetry (asset, metric, ts) and duplicate event (asset, event_type, ts) are rejected
+PASS  C1 migration 005: the unique index exists and a direct duplicate alert insert is rejected
+PASS  C1 store_alerts: second call with the same alert returns no new id and leaves one row
+PASS  C1 concurrency: two connections storing the same alert at the same time create exactly one row
+PASS  C1 migration 005 refuses to apply (clear error) when duplicates already exist
+PASS  compat tables (CURRENT BEHAVIOUR): the database does NOT enforce metric/event <-> system compatibility
+
+18/18 passed

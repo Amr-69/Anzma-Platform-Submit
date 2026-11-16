@@ -1,0 +1,27 @@
+PASS  integrity: every event type the generator/scenarios emit is valid for its system
+PASS  integrity: incompatible event/equipment pairs are rejected (e.g. SMOKE_DETECTED on a chiller)
+PASS  integrity: alert rules cannot be raised on incompatible equipment
+PASS  integrity: evidence of another system is only allowed for the CCTV/ACCESS blind-spot rule
+PASS  integrity: historical events vs current conditions (opener without closer = current)
+PASS  integrity: compat SQL covers every catalogue row
+PASS  alerts: cooling failure becomes a CRITICAL HVAC_HIGH_TEMP alert with fan_off and sustained facts
+PASS  alerts: normal operation produces no alert (no false positives)
+PASS  alerts: every alert's evidence is traceable to real events and compatible with the asset
+PASS  recommendations: derived only from playbook rules whose conditions hold, linked to evidence
+PASS  recommendations: unknown rule or empty evidence yields no recommendation and a limitation
+PASS  validation: deterministic explanation is grounding_supported only because the checks really ran
+PASS  validation: an invented reading is rejected
+PASS  validation: invented cause, unapproved action and unknown citation are rejected
+PASS  validation: a cause whose condition does not hold is rejected (FILTER_BLOCKAGE without a filter fault)
+PASS  validation: no stored evidence -> insufficient, never grounding_supported, with a limitation
+PASS  validation: grounding_supported is refused when errors are present, and 'partial' is used when no cause is supported
+PASS  validation: standard_response refuses 'grounding_supported' without recorded checks
+PASS  validation: truncated evidence is disclosed as a limitation
+PASS  fallback: Ollama unreachable -> deterministic grounding_supported answer with the limitation stated
+PASS  missing data: a gap in readings does not invent an alert or a reading
+PASS  D4: the success status is 'grounding_supported' with scope 'grounding'; 'validated' no longer exists
+PASS  playbook: every action carries a status and an approver
+PASS  playbook: a DRAFT action is never recommended, never eligible and is rejected by the validator
+PASS  freshness: as_of adds a limitation to an explanation
+
+25/25 passed

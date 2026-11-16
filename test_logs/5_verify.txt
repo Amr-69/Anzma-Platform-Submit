@@ -1,0 +1,15 @@
+ n  |                           check_name                           | expected | actual | status 
+----+----------------------------------------------------------------+----------+--------+--------
+  1 | tables missing                                                 | 0        | 0      | OK
+  2 | unexpected extra tables (data-model.sql draft leaked in?)      | 0        | 0      | OK
+  3 | views missing                                                  | 0        | 0      | OK
+  4 | indexes missing                                                | 0        | 0      | OK
+  5 | key columns missing                                            | 0        | 0      | OK
+  6 | alerts unique index is UNIQUE on (rule_id, asset_id, first_ts) | 1        | 1      | OK
+  7 | duplicate alerts on (rule_id, asset_id, first_ts)              | 0        | 0      | OK
+  8 | CHECK constraints in public (base schema + incidents)          | >=14     | 14     | OK
+  9 | UNIQUE constraints in public (telemetry/event/assets/etc.)     | >=8      | 8      | OK
+ 10 | FOREIGN KEY constraints in public                              | >=13     | 14     | OK
+ 99 | OVERALL                                                        | all OK   |        | OK
+(11 rows)
+

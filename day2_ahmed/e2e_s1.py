@@ -44,7 +44,9 @@ def build(db):
     admin.close()
     conn = connect(db)
     with conn.cursor() as c:
-        for f in ("anzma_schema_and_seed.sql", os.path.join("migrations", "003_incidents.sql")):
+        for f in ("anzma_schema_and_seed.sql", os.path.join("migrations", "003_incidents.sql"),
+                  os.path.join("migrations", "004_chat_views.sql"),
+                  os.path.join("migrations", "005_alert_uniqueness.sql")):   # db_adapter.store_alerts needs 005's unique index
             c.execute(open(os.path.join(ROOT, f), encoding="utf-8").read())
             conn.commit()
     return conn

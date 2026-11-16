@@ -1,6 +1,6 @@
 """
 test_frontend_api.py - the API the dashboard page calls, tested on a REAL PostgreSQL built from the files Docker uses:
-db/init/anzma_schema_and_seed.sql, then day2_ahmed/migrations/003_incidents.sql.
+db/init/anzma_schema_and_seed.sql, then day2_ahmed/migrations/003_incidents.sql, 004_chat_views.sql and 005_alert_uniqueness.sql.
 
 Run:  PGHOST=localhost PGUSER=postgres PGPASSWORD=... python test_frontend_api.py      (user may CREATE DATABASE)
 """
@@ -27,7 +27,8 @@ with psycopg.connect(host=HOST, port=PORT, user=USER, password=PASSWORD, dbname=
 DB = psycopg.connect(host=HOST, port=PORT, user=USER, password=PASSWORD, dbname=TEST_DB, row_factory=dict_row,
                      autocommit=True)
 DB.execute(sql_file("db/init/anzma_schema_and_seed.sql"))
-DB.execute(sql_file("day2_ahmed/migrations/003_incidents.sql"))
+for _m in ("003_incidents", "004_chat_views", "005_alert_uniqueness"):   # same sequence as the runtime schema
+    DB.execute(sql_file(f"day2_ahmed/migrations/{_m}.sql"))
 
 os.environ.update(PGHOST=HOST, PGPORT=PORT, PGUSER=USER, PGPASSWORD=PASSWORD, PGDATABASE=TEST_DB)
 from fastapi.testclient import TestClient         # noqa: E402

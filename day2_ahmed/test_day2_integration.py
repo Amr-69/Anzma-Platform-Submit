@@ -1,6 +1,6 @@
 """
 test_day2_integration.py - end-to-end tests on a REAL PostgreSQL database (no Ollama needed).
-Builds a throw-away database: 1) anzma_schema_and_seed.sql  2) migrations/003_incidents.sql (applied twice to prove
+Builds a throw-away database: 1) anzma_schema_and_seed.sql  2) migrations/003_incidents.sql, then 004 and 005 (each applied twice to prove
 it is idempotent), then drives fact -> alert -> incident -> evidence -> explanation -> grounding check ->
 recommendation through the real code.
 
@@ -19,6 +19,8 @@ TEST_DB = "anzma_day2_test"
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SCHEMA_FILE = os.path.join(ROOT, "anzma_schema_and_seed.sql")          # authoritative runtime schema + demo seed
 MIGRATION_003 = os.path.join(ROOT, "migrations", "003_incidents.sql")  # incidents, loaded AFTER the schema file
+MIGRATION_004 = os.path.join(ROOT, "migrations", "004_chat_views.sql")  # five v_* views
+MIGRATION_005 = os.path.join(ROOT, "migrations", "005_alert_uniqueness.sql")  # UNIQUE (rule_id, asset_id, first_ts)
 
 
 def connect(db, **kw):
@@ -48,7 +50,13 @@ def build_database():
         conn.commit()
         c.execute(sql003)                                  # idempotent: a second run must not fail
         conn.commit()
-        after = snapshot(c)
+        after = snapshot(c)                                # snapshot proves 003 alone; 004/005 follow (runtime sequence)
+        for path in (MIGRATION_004, MIGRATION_005):
+            sql = open(path, encoding="utf-8").read()
+            c.execute(sql)
+            conn.commit()
+            c.execute(sql)                                 # idempotent: a second run must not fail
+            conn.commit()
     conn.commit()
     return conn, before, after
 
